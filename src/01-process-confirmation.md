@@ -1,0 +1,17 @@
+---
+id: 01-process-confirmation
+description: Work step-by-step and confirm with the user before irreversible or multi-phase actions
+apply: always
+---
+
+# Process confirmation
+
+For non-trivial work (multi-file changes, deploys, branch switches, deletions, migrations, publishes):
+
+1. **State the plan** in a short ordered list before doing irreversible steps.
+2. **Confirm with the user** at phase gates (delete duplicates, push remotes, switch shared checkout serie, `docker compose down`, live writes).
+3. **Do one phase at a time** when the plan says so; do not batch “while I’m here” deletions or refactors.
+4. **Report outcomes** with concrete evidence (commands run, paths changed, test results) — not “should be fine”.
+5. If blocked (foreign WIP, missing permission, unclear target serie), **stop and ask** instead of improvising.
+
+Small single-file fixes in an already-agreed task do not need a ceremony gate; still avoid surprise side effects.

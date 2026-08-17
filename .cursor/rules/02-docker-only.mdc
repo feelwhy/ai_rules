@@ -1,0 +1,34 @@
+---
+description: All local Odoo runs in Docker — never host venv or odoo-bin
+alwaysApply: true
+---
+
+# Docker only
+
+Local Odoo **always** runs in Docker. Never start, suggest, or document a host Python venv, host `odoo-bin`, or host Postgres for app work.
+
+## Variants
+
+### faOtools flat hub (`faotools_env/local/`)
+
+```bash
+cd /home/feelwhy/Odoo/faotools_env
+./local/env-up.sh demo19          # community
+./local/env-up.sh demo19e         # enterprise
+./local/env-up.sh support         # faotools.com neutralized
+./local/env-shell.sh demo19       # odoo shell
+./local/env-shell.sh demo19 psql
+```
+
+Details: `faotools_env/local/README.md` and `ai_rules_fao` local-Docker rule.
+
+### Febado (Doodba / `febado-odoo`)
+
+- Stack via `febado/scripts/docker-dev.sh` and sibling `febado-odoo` compose (`PORT_PREFIX=23`).
+- Follow febado in-repo rules (`odoo-local-docker.local.mdc`, telepresence, test scripts).
+- Do not stop/recreate the user’s long-lived `:23069` stack unless asked.
+
+### Shared bans
+
+- No `python -m odoo`, no `./odoo-bin`, no activating a project venv to “just run Odoo”.
+- One-off containers must be `--rm`. Prefer existing launch scripts over ad-hoc `docker run`.

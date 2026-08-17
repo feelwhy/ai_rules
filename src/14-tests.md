@@ -1,0 +1,26 @@
+---
+id: 14-tests
+description: Test layout and conventions for Odoo module tests
+apply: agent
+---
+
+# Layout
+- Tests live in `<module>/tests/`.
+- Test files are named `test_<feature>.py` and imported from `<module>/tests/__init__.py`.
+- Use `TransactionCase` for ORM behavior, `HttpCase` for controllers/browser flows, and tagged cases where install timing matters.
+
+# Conventions
+- Use `@tagged("post_install", "-at_install", "<module>")` when a module-specific tag is helpful.
+- One behavior per test method. Name tests as `test_<scenario>_<expected>`.
+- Prefer `setUpClass` for shared records and factories when setup is reused.
+- Use Odoo assertions such as `assertRecordValues` where they make failures clearer.
+
+# Coverage Priorities
+- Computed fields, constraints, onchange-impacting helpers, cron/job behavior, and upgrade-sensitive defaults.
+- Security rules with `with_user(...)` for portal/public/user isolation.
+- Controllers: auth mode, response shape, access denial, and side effects.
+- External APIs/cloud integrations: mock network calls; never hit live services in tests.
+
+# Command Reference
+`../faotools_env/local/env-up.sh demo19 --test <module>`
+(or `demo19e` for enterprise). See `faotools_env/local/README.md`.

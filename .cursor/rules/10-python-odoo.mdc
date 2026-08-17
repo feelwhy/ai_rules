@@ -1,0 +1,50 @@
+---
+description: Python and Odoo ORM conventions (incl. model member order)
+alwaysApply: false
+---
+
+# Python / Odoo ORM
+
+## Style
+
+- Follow PEP 8 and the coding conventions already used in the target module / serie.
+- Keep the repository's existing quote/formatting style when editing nearby code.
+- Use `_logger = logging.getLogger(__name__)`; no `print`.
+- Type hints are allowed only when they do not interfere with Odoo registry loading or monkey-patching.
+- Prefer compact signatures (few lines) over one-argument-per-line wrapping unless the file already uses that style.
+
+## ORM
+
+- Use the ORM. Raw SQL needs a strong reason, parameterized queries, and no user-controlled f-strings.
+- Write recordset-safe code: methods should work with empty, singleton, and multi-record `self` where appropriate.
+- Prefer `search_count`, `read_group`, `_read_group`, mapped/filtered operations, and batching over per-record queries.
+- Use `sudo()` deliberately and narrowly; add a short comment when it changes access semantics.
+- Avoid manual `cr.commit()` in business logic; only use it in explicit jobs or integration flows with a documented reason.
+
+## Model file order
+
+1. `_name`, `_description`, `_inherit`, `_order`, `_rec_name`, `_check_company_auto`
+2. Default methods
+3. Selection fields methods
+4. `@api.depends` computes
+5. inverse methods
+6. `@api.constrains`
+7. `@api.onchange`
+8. Field definitions (grouped: stored → related → computed → company-dependent)
+9. SQL constraints (`_sql_constraints` / `models.Constraint` on serie that requires it)
+10. CRUD overrides (`create`, `write`, `unlink`, `copy`)
+11. Action methods (`action_*`)
+12. Business / helper methods (`_*`)
+
+## Module integrity
+
+- New models need `security/ir.model.access.csv`, optional record rules, manifest `data`, and package imports in the same change.
+- Declare every direct module dependency in `__manifest__.py`; do not rely on transitive dependencies.
+- Do not import Python from another custom add-on unless the manifest depends on that add-on.
+- Keep model, field, XML ID, and config parameter names prefixed by the owning module or existing product family.
+
+## Variants
+
+- Match the **active Odoo serie** (git branch / env target), not an assumed 19.0 API.
+- **febado**: also follow febado in-repo `python-odoo.mdc` (stricter formatting, `api.model_create_multi`, etc.).
+- **tools** apps-store metadata / version policy: see `ai_rules_fao` manifest + packaging rules.

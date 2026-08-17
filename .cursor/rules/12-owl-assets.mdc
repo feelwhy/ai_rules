@@ -1,0 +1,28 @@
+---
+description: JavaScript, OWL, XML template, SCSS, and asset bundle conventions
+alwaysApply: false
+---
+
+# JavaScript Modules
+- Start Odoo JavaScript files with `/** @odoo-module **/` unless the surrounding file type intentionally differs.
+- Use ES module syntax and Odoo registries/services. Do not add AMD-style `odoo.define` in new code.
+- Prefer existing Odoo services (`orm`, `rpc`, `notification`, `dialog`, `action`, `user`, `router`) over ad hoc globals.
+
+# OWL
+- Use hooks (`useState`, `useRef`, `useService`, `onWillStart`, `onMounted`) instead of manual lifecycle workarounds.
+- Keep component templates, class names, and registry keys consistent with the module's established naming.
+- Validate props when the surrounding codebase does so; keep components small and module-local.
+
+# Assets
+- Register all new JS/XML/SCSS in the owning module's `__manifest__.py` assets.
+- Add backend UI to `web.assets_backend`; website/portal UI to `web.assets_frontend`; custom bundles only when reused.
+- Do not include assets from another custom add-on unless the manifest depends on that add-on.
+
+# Styling
+- Reuse Odoo variables and existing SCSS utilities before adding new colors or layout primitives.
+- Keep styles scoped to the component/view where possible; avoid global selectors that can affect other installed apps.
+
+# Don'ts
+- No jQuery in new code unless maintaining an existing legacy widget.
+- No global `window.*` state for business logic.
+- No inline `<script>` in QWeb templates.

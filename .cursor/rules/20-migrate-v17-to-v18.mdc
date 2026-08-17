@@ -1,0 +1,88 @@
+---
+description: Checklist and transforms for migrating an Odoo module from 17.0 to 18.0
+alwaysApply: false
+---
+
+# Odoo 17 -> 18 migration
+
+Apply these transforms when porting a module to 18.0. Work module-by-module, keep
+public model/field/XML-ID names stable unless the upgrade itself renames them, and
+bump the manifest `version` to `18.0.x.y.z`. After edits run the test command from
+the active test command / module structure rules. Don't edit `odoo/` (and `enterprise/`); override in the custom module.
+
+## Python
+
+- `_()` translation in pure Python (e.g. `_sql_constraints` messages) is deprecated -> just remove the `_()` wrapper.
+- `check_access_rights(...)` is deprecated -> use `check_access(...)`.
+- `_check_recursion()` is deprecated -> use `_has_cycle()`. It can take a field name arg (covers children, not only parents). **The boolean result is inverted** — flip the surrounding logic.
+- `def _search(...)`: `access_rights_uid` is no longer accepted as an argument — drop it from signature and callers.
+- `group_expand` callables no longer accept a `domain` argument. See `documentation_builder/documentation_section.py` (`_read_group_category_id`).
+- `slug` / `slugify` are removed from `odoo.addons.http_routing`:
+
+```python
+# BEFORE
+from odoo.addons.http_routing.models.ir_http import slug, slugify
+slug(product)
+slugify(text, max_length=1024, path=True)
+# AFTER
+self.env["ir.http"]._slug(product)
+self.env["ir.http"]._slugify(text, max_length=1024, path=True)
+```
+
+- `request.session` is now pure JSON: keys are integers, values must be JSON-serializable (no `datetime`, recordsets, etc.). See `odoo_password_manager/.../bundle_security_mixin.py`.
+- Watch `expression.OR` / `expression.AND` with empty sub-lists: an empty list element can collapse to a buggy `[(1, "=", 1)]`. Guard empties before combining. See `odoo_password_manager/.../password_key.py` `_construct_duplicates_domain`.
+
+## XML / views
+
+- `tree` is renamed to `list` everywhere — view `<tree>` tags, `view_mode="tree,..."` in actions, `view_type`, etc. -> `list`.
+- Chatter is declared with a single tag. Replace the old block:
+
+```xml
+<!-- BEFORE -->
+<div class="oe_chatter">
+  <field name="message_follower_ids"/>
+  <field name="activity_ids"/>
+  <field name="message_ids"/>
+</div>
+<!-- AFTER -->
+<chatter/>
+```
+
+- `ir.cron` no longer has `numbercall` and `doall` fields — remove them from `<record>` data.
+- `ir.actions.act_window` gains an optional `path` field for a clean web URL: `<field name="path">sticky-notes</field>`.
+- Kanban view template names changed:
+  - `<t t-name="kanban-box">` -> `<t t-name="card">`
+  - `<t t-name="kanban-menu">` -> `<t t-name="menu">`
+  - the bottom area: use `<footer>` instead of `o_kanban_record_bottom`.
+
+## OWL / JS
+
+- `_lt()` is deprecated -> use `_t()`.
+- `useService("user")` is deprecated -> import the singleton:
+
+```js
+import { user } from "@web/core/user";
+await user.hasGroup("project.group_project_user");
+```
+
+- `useService("rpc")` is deprecated -> import `rpc` directly:
+
+```js
+import { rpc } from "@web/core/network/rpc";
+const fields = await rpc("/web/export/get_fields", { ...parentParams, model, import_compat });
+```
+
+- `archParseBoolean(...)` (utils) is deprecated -> use plain `Boolean(...)`.
+- For mounting components, don't use `import { templates } from "@web/core/assets"` -> use `import { getTemplate } from "@web/core/templates"`. See `odoo_password_manager/.../js/vault_login.js`.
+
+## Single-view UI / JS
+
+- `SearchModel._getDomain` can now be cleanly overridden (super-call returns properly); drop the old `try/except` workaround or you'll get an error. See `product_management/.../search/product_search_model.js`.
+- `web.KanbanRecord` root element changed from `<div t-ref="root">` to `<article t-ref="root">`. See `product_management/.../kanban/product_kanban_record.xml`.
+- jQuery is NOT in backend assets. If truly needed, load it on component start: `loadJS("/web/static/lib/jquery/jquery.js")` (`odoo_password_manager/password_navigation`). Prefer removing jQuery. Typical replacement:
+
+```js
+// BEFORE: var d = $.Deferred();
+import { Deferred } from "@web/core/utils/concurrency";
+const d = new Deferred();
+```

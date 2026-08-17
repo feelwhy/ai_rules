@@ -1,0 +1,105 @@
+---
+description: Checklist and transforms for migrating an Odoo module from 18.0 to 19.0
+alwaysApply: false
+---
+
+# Odoo 18 -> 19 migration
+
+Apply these transforms when porting a module to 19.0. Assumes the module is already
+v18-clean (see `20-migrate-v17-to-v18`). Keep public model/field/XML-ID names stable
+unless the upgrade renames them, and bump the manifest `version` to `19.0.x.y.z`.
+Release notes: https://www.odoo.com/odoo-18-1-release-notes (and -18-2/-18-3/-18-4).
+Run the test command from the active test command / module structure rules. Override in the module, never edit `odoo/`.
+
+## Security / res.groups (touch every security XML)
+
+- New intermediate level `res.groups.privilege` sits between `ir.module.category` and `res.groups`. `res.groups` gains a `privilege_id`.
+- Field renames — update all `security/*.xml`, `data`, and code:
+  - `res.groups.users` -> `res.groups.user_ids`
+  - `res.users.groups_id` -> `res.users.group_ids`
+  - `ir.actions.server`, `ir.actions.act_window`, `ir.ui.menu`: `groups_id` -> `group_ids`
+  - chained access: `access_ids.group_id.users` -> `access_ids.group_id.user_ids` (note: `group_id` itself keeps its name).
+- `base.module_category_hidden` is no longer needed — remove it, no privilege replacement.
+- `res.groups.all_user_ids` = all users of a group (NOT stored). For `@api.depends` use:
+  `"access_user_group_ids"`, `"access_user_group_ids.user_ids"`, `"access_user_ids"`,
+  `"access_user_group_ids.implied_by_ids.all_implied_by_ids.user_ids"`.
+  See `mail_manual_routing` `security.xml` + `mail_message.xml` + `mail_attach.xml` (and `password_key`).
+
+## Python
+
+- `auto_join` on relational fields is deprecated — remove it.
+- Domain combinators move to `odoo.fields.Domain`:
+
+```python
+# BEFORE
+from odoo.osv.expression import OR, AND
+# AFTER
+from odoo.fields import Domain
+Domain.OR([...]); Domain.AND([...])
+```
+
+- `@api.returns(...)` is no longer used — remove the decorator.
+- Obsolete aliases: `self._cr` -> `self.env.cr`; `self._context` -> `self.env.context`; `request.context` -> `request.env.context`.
+- `_sql_constraints` is unsupported -> use `models.Constraint`:
+
+```python
+# BEFORE: _sql_constraints = [("name_uniq", "unique (name)", "Tag name already exists!")]
+# AFTER
+_name_uniq = models.Constraint("unique (name)", "Tag name already exists!")
+```
+
+- `sale.order.line` / `purchase.order.line`: field `product_uom` -> `product_uom_id`.
+- `read_group` is deprecated -> use `_read_group` (see `stock_qty_forecast/.../stock_forecast_wizard.py`).
+- `@route(type='json')` is a deprecated alias -> use `@route(type='jsonrpc')`.
+- `def _search(...)` has new args — check the v19 signature when overriding.
+- `ir.mail_server.build_email(...)` removed -> `_build_email__(...)`.
+- `safe_eval` no longer accepts a `nocopy` argument.
+- A record's "search" field attribute now relies on a method whose `value` is an `OrderedSet`.
+
+## XML / views / actions
+
+- `ir.actions.act_window` `target` no longer supports the `inline` value — fix every `res_config_settings.xml` (and any inline action).
+- Kanban actions: `type="edit"` is deprecated -> use `type="open"`.
+- `search_view_id` must use `ref` not `eval`: `<field name="search_view_id" ref="sticky_note_view_search"/>`.
+- A `<group>` in a search view should not carry `expand="0"` / `string="Group by..."` — drop those attrs.
+- `customize_show` on website pages is deprecated -> replace with the website-builder JS option.
+
+## Email templates
+
+- Use `ctx.get("key")` instead of `ctx["key"]` in template expressions.
+
+## OWL / JS
+
+- `FormController` `mode` prop is replaced with `readonly` — search source for `mode: "`, `mode: '`, `mode: {` and adapt.
+- Record `data` is now a dict, not an array — update any index-based access.
+- `useDateTimePicker` import moved:
+
+```js
+// BEFORE
+import { useDateTimePicker } from "@web/core/datetime/datetime_hook";
+// AFTER
+import { useDateTimePicker } from "@web/core/datetime/datetime_picker_hook";
+```
+
+## Single-view UI / JS
+
+- `all_group_ids` = all current groups of the user (incl. built-in). In every single-view-interface module, rework `action_return_mass_actions` accordingly.
+- `getExportedFields` must be adapted (see `product_management/components/product_manager/product_manager.js`):
+
+```js
+async getExportedFields(isCompatible, parentParams) {
+  const resIds = this.props.selection.map((rec) => rec.id);
+  const ids = resIds.length > 0 && resIds;
+  const domain = [["id", "in", ids]];
+  return await rpc("/web/export/get_fields", {
+    model: this.props.kanbanModel.root.resModel,
+    domain,
+    import_compat: isCompatible,
+    ...parentParams,
+  });
+}
+```
+
+## Mail / activities
+
+- Completed `mail.activity` records are now archived, not deleted — code that relied on deletion (counts, cleanup, searches) must account for archived rows.
