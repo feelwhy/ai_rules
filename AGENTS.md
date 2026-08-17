@@ -381,6 +381,40 @@ _Commit, test, review, and push workflow_
 
 # Commit workflow
 
+## Commit modes (A / B)
+
+The **letters are universal**; the routing and the gates behind them belong to the project. The table
+below is the **faOtools hub** mapping.
+
+**febado already owns its own A/B definition** (`febado-push-workflows.local.mdc`) and it is *not*
+this one — there, Mode A (local commit) is the default even for “push this workflow / push WF-…”, and
+Mode B means a **section-scoped MR**, not a bare `git push`. In febado, always route the phrase and
+the test/review gates through febado’s rule; never apply the hub row below to it, and never relax
+febado’s stricter policy.
+
+| User says | Mode | Push | Tests | Review |
+|-----------|------|------|-------|--------|
+| “commit”, “commit A”, “commit mode A” | **A** | no | not required | no review |
+| “commit A1” | **A1** | no | not required | **review first** |
+| “commit B”, “commit mode B”, “commit and push”, “push” | **B** | yes | **required** | **offer** a Cursor review before pushing |
+| “commit B1” | **B1** | yes | **required** | **review first** (no need to ask) |
+| “commit B2” | **B2** | yes | **required** | no review — push directly |
+
+- **Bare “commit” means mode A.** Never push in mode A — not “while I’m here”, not because the
+ branch looks ready.
+- **Every B mode is gated on tests**: run the relevant tests for the changed module(s) first and
+ report the result. Failing, skipped, or un-runnable tests → **stop and ask**; do not push.
+- Mode A does not require a test run, but never commit knowingly broken code, and say plainly
+ whether tests were run.
+- **Review = Cursor review of the local changes** (Bugbot subagent; add a security review when the
+ change touches auth, ACL, controllers, or secrets). Fix or report its findings **before** pushing.
+- **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
+ An explicit “with review” / “without review” in the request wins over the mode letter.
+- All modes: commit only paths belonging to this task (never-discard-WIP), keep the repo’s message
+ style, and never `--no-verify` unless the user asks.
+- Which repos a bare “commit” / “push” covers on the faOtools hub: see `ai_rules_fao`
+ `02-repo-boundaries` (every non-read-only checkout).
+
 ## Before committing
 
 1. Run the **relevant tests** for the changed module(s) via Docker (`env-up … --test`, `support/devops/run_tests.sh`, or febado `scripts/test.sh`). Do not commit knowingly broken behavior.
@@ -389,8 +423,9 @@ _Commit, test, review, and push workflow_
 
 ## Review
 
-- Code review / Bugbot is **optional** unless the user or repo policy asks for it.
-- Do not block a requested commit solely to invent a review ritual.
+- Review is driven by the mode suffix above: none for `A` / `B2`, run it for `A1` / `B1`, **offer** it
+ for a bare `B` / “push”.
+- Do not invent extra review rituals beyond that, and do not block a mode `A` commit on a review.
 
 ## Push variants
 
@@ -607,12 +642,18 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | run odoo 17 / 18 | `env-up.sh demo17` / `demo18` (add `e` for enterprise) |
 | run support / faotools.com locally | `env-up.sh support` |
 | run life | `env-up.sh life` |
-| switch serie / checkout 18 | `faotools_env/local/env-serie.sh 18.0` |
+| switch serie / change version / switch branch to 18 | put the serie repos on `18.0` — on the faOtools hub follow `ai_rules_fao` `01-hub-serie` (explicit per-repo checkout, then pull) |
+| pull changes | fast-forward the current branch of the hub repos with `--ff-only` (`ai_rules_fao` `01-hub-serie`) |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
 | odoo shell / psql | `env-shell.sh <target>` / `env-shell.sh <target> psql` |
 | show odoo logs | `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` |
 | sync images/dbs | `faotools_env/local/env-sync.sh` |
 | launch / start febado | febado `scripts/docker-dev.sh` + febado local Docker rules — not `env-up` |
 | test febado module | febado `scripts/test.sh` (in-repo) |
+| commit / commit A | prepare the **local** commit only — never push, no review (`16-commit-workflow`) |
+| (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
+| commit A1 | local commit only, **with** a Cursor review first |
+| commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |
+| commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2) |
 
 If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.

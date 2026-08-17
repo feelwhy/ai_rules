@@ -15,12 +15,18 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | run odoo 17 / 18 | `env-up.sh demo17` / `demo18` (add `e` for enterprise) |
 | run support / faotools.com locally | `env-up.sh support` |
 | run life | `env-up.sh life` |
-| switch serie / checkout 18 | `faotools_env/local/env-serie.sh 18.0` |
+| switch serie / change version / switch branch to 18 | put the serie repos on `18.0` — on the faOtools hub follow `ai_rules_fao` `01-hub-serie` (explicit per-repo checkout, then pull) |
+| pull changes | fast-forward the current branch of the hub repos with `--ff-only` (`ai_rules_fao` `01-hub-serie`) |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
 | odoo shell / psql | `env-shell.sh <target>` / `env-shell.sh <target> psql` |
 | show odoo logs | `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` |
 | sync images/dbs | `faotools_env/local/env-sync.sh` |
 | launch / start febado | febado `scripts/docker-dev.sh` + febado local Docker rules — not `env-up` |
 | test febado module | febado `scripts/test.sh` (in-repo) |
+| commit / commit A | prepare the **local** commit only — never push, no review (`16-commit-workflow`) |
+| (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
+| commit A1 | local commit only, **with** a Cursor review first |
+| commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |
+| commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2) |
 
 If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.
