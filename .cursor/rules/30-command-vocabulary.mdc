@@ -12,6 +12,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | run odoo 19 / demo 19 | `faotools_env/local/env-up.sh demo19` |
 | run odoo 19 enterprise | `env-serie.sh 19.0` if needed, then `env-up.sh demo19e` |
 | run odoo 17 / 18 | `env-up.sh demo17` / `demo18` (add `e` for enterprise) |
+| start / launch **the same** target again, restart it | `env-up.sh <that-target> --restart` **only** — see below |
 | run support / faotools.com locally | `env-up.sh support` |
 | run life | `env-up.sh life` |
 | switch serie / change version / switch branch to 18 | put the serie repos on `18.0` — on the faOtools hub follow `ai_rules_fao` `01-hub-serie` (explicit per-repo checkout, then pull) |
@@ -30,6 +31,21 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2) |
 
 If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.
+
+## Same target again: restart only
+
+If the user asks to start / launch / run **the same** image or target again
+(the one already up, or the one last launched in this chat — e.g. “start it
+again”, “restart demo17e”, “launch the same”):
+
+1. Run **only** `faotools_env/local/env-up.sh <that-target> --restart` (logs +
+   URLs as usual). That restarts the Odoo container.
+2. Do **not** do anything else: no `env-serie.sh`, no `env-prepare.sh`, no
+   `env-sync.sh`, no `--fresh`, no `-u` / `-i` / `--test`, no git checkout,
+   no Docker Desktop start unless `docker info` actually fails, no script or
+   rule edits, no commits.
+
+A different target or serie is a new launch, not this case.
 
 ## Launching a local target: what the user must always get
 
