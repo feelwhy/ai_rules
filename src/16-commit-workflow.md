@@ -40,8 +40,39 @@ febado’s stricter policy.
 - Which repos a bare “commit” / “push” covers on the faOtools hub: see `ai_rules_fao`
  `02-repo-boundaries` (every non-read-only checkout).
 
+## Delivery gate — never leave shippable work behind (STRICT)
+
+Every push / MR / “commit B*” is a **delivery moment**. Before pushing, account for *all* work that is
+not yet on the target branch, and either **include it** or **warn about it by name** in the reply.
+Staying silent about undelivered work is a failure, not a tidy scope.
+
+1. `git status -sb` in every repo the request covers. Read **every** dirty and untracked path.
+2. Enumerate work that is committed locally but **not pushed**: local branches and stashes whose
+ content is missing from the target branch. Compare **by content** (are the added lines present on
+ the target?), never by patch-id (`git cherry`) or commit subject — rebases and cherry-picks change
+ patch-ids, and ids get reassigned, so both shortcuts confidently report the opposite of the truth.
+3. Classify each item and act:
+ - **belongs to this delivery** → include it in the commit / MR;
+ - **foreign WIP** from another session → never touch it, and **warn**, naming the paths
+ (`03-never-discard-wip`);
+ - **genuinely local-only** → exclude it and say so;
+ - **unsure** → ask once. Do not push it silently and do not omit it from the report.
+4. **“Local-only” is a narrow allowlist**, meaning *must never reach production*: gitignored files
+ (e.g. `*.local.mdc`), personal notes outside the repo, secrets / `.env`, throwaway scratch. A
+ finished feature, fix, test, doc, or script is **never** local-only. A mode A commit is
+ “committed locally, **queued for push**” — never call it local-only, in chat or in notes.
+5. The push reply **must** contain a delivery report: what shipped, plus every local item that did
+ **not** ship and why. “Pushed / merged” with no such list is an incomplete answer.
+6. When the user says “push” and unshipped work plausibly belongs to it, default to **including**
+ it and say what you included. Only clearly unrelated work may be left behind — with a warning.
+
+Incident (2026-08-18): six walked febado workflows plus a finished local-Docker script change had
+sat undelivered for weeks because walk notes called them “local-only” and the check compared commit
+subjects. Recovery took two extra MRs. This gate exists so that never repeats.
+
 ## Before committing
 
+0. Run the **delivery gate** above; a push must not start while shippable work is unaccounted for.
 1. Run the **relevant tests** for the changed module(s) via Docker (`env-up … --test`, `support/devops/run_tests.sh`, or febado `scripts/test.sh`). Do not commit knowingly broken behavior.
 2. `git status` / `git diff` — commit only paths belonging to this task; respect never-discard-WIP.
 3. Follow the repo’s existing commit-message style (focus on why).
