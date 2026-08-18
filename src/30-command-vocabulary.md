@@ -20,10 +20,10 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | pull changes | fast-forward the current branch of the hub repos with `--ff-only` (`ai_rules_fao` `01-hub-serie`) |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
 | odoo shell / psql | `env-shell.sh <target>` / `env-shell.sh <target> psql` |
-| show odoo logs | `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`) |
+| show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`). Febado: `febado/scripts/docker-dev.sh logs` (Cursor tab `febado Odoo logs`) |
 | sync images/dbs | `faotools_env/local/env-sync.sh` (downloads **and** restores + neutralizes) |
 | is \<target\> ready to launch? | `faotools_env/local/env-prepare.sh --check` |
-| launch / start febado | febado `scripts/docker-dev.sh` + febado local Docker rules — not `env-up` |
+| launch / start febado | febado `scripts/docker-dev.sh start` (no `--no-logs`) + febado local Docker rules — not `env-up`. Same Cursor log tab as faOtools (`febado Odoo logs`) |
 | test febado module | febado `scripts/test.sh` (in-repo) |
 | commit / commit A | prepare the **local** commit only — never push, no review (`16-commit-workflow`) |
 | (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
@@ -54,9 +54,13 @@ A different target or serie is a new launch, not this case.
    has to switch serie. Anything in the minutes means the target was never restored
    or neutralized — run `env-prepare.sh --check`, fix the **refresh**, and say so.
    Never present a multi-minute wait as normal.
-2. **Logs.** Stream them in the terminal: run `env-up.sh <target>` (no `--no-logs`)
-   and background the command so it keeps printing. Also give the host log path.
+2. **Logs.** Stream them in a **visible** Cursor terminal tab (agent shells stay
+   hidden). faOtools: `env-up.sh <target>` with no `--no-logs` — it follows on a
+   TTY and requests `<target> Odoo logs`. Febado: `scripts/docker-dev.sh start`
+   with no `--no-logs` — it requests `febado Odoo logs` the same way
+   (`~/env-sync/logs/reveal-in-cursor`). Also give the host log path when
+   faOtools prints one.
 3. **Links.** Always repeat the printed Odoo URL (with `admin` / `admin`), the
    Mailpit URL, and the database name — do not make the user hunt for them.
-4. **Errors.** `env-up.sh` prints `ERROR`/`CRITICAL` lines logged since start.
-   Report them instead of claiming a clean launch.
+4. **Errors.** `env-up.sh` and Febado `docker-dev.sh start` print `ERROR`/`CRITICAL`
+   lines logged since start. Report them instead of claiming a clean launch.
