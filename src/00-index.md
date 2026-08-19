@@ -16,6 +16,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
 | `03-never-discard-wip` | Do not stash/discard foreign WIP |
+| `06-verify-hypotheses` | Check the hypothesis before recommending |
 | `30-command-vocabulary` | Natural-language → concrete commands |
 
 ## Agent-requestable (pull when the task matches)

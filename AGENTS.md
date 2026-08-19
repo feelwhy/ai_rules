@@ -18,6 +18,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
 | `03-never-discard-wip` | Do not stash/discard foreign WIP |
+| `06-verify-hypotheses` | Check the hypothesis before recommending |
 | `30-command-vocabulary` | Natural-language → concrete commands |
 
 ## Agent-requestable (pull when the task matches)
@@ -206,6 +207,45 @@ _Odoo module scaffolding and engineering defaults_
 - **support**: one database; flows span modules via declared dependencies — still avoid undeclared coupling.
 - **febado**: follow `febado-new-module.mdc` and in-repo packaging rules.
 
+## 06-verify-hypotheses
+
+_Verify a hypothesis against real code, data, or logs before recommending or asserting it_
+
+# Verify, don't theorize
+
+An explanation, diagnosis, or recommendation is only worth giving once it has been **checked against
+reality**. Plausible-sounding reasoning about code you did not read, an API you remember from
+another serie, or data you did not query is a guess — do not deliver it as a finding.
+
+## Check first (the cheap checks are always available)
+
+- **Code**: read the file, `Grep` the symbol, follow the actual call site — including upstream
+  `odoo/` / `enterprise/` / `others/oca/` sources (read-only) instead of recalling the API.
+- **Data**: query the real database (`env-shell.sh <target> psql`, Odoo MCP, pgweb) instead of
+  assuming what records exist.
+- **Behavior**: run the test, hit the URL, reproduce the user's step in the running Docker stack.
+- **Logs**: read the traceback / `ERROR` lines rather than inferring the failure mode.
+- **Version reality**: check the **active serie** (branch / env target) — an API that exists on 19.0
+  may be gone or renamed on the serie in front of you.
+
+## Rules
+
+1. **No unverified cause.** Before "the reason is X", confirm X. One concrete check beats three
+   paragraphs of reasoning.
+2. **No unverified fix.** Do not recommend an edit whose premise (this field exists, this hook
+   fires, this template is inherited) has not been looked up.
+3. **Label real hypotheses.** When a check is genuinely impossible (needs prod, the user's browser,
+   a permission), say it is a hypothesis, name the check that would settle it, and ask — never
+   promote it to a conclusion.
+4. **Cite the evidence** in the reply: `path:line`, the command run, the query result, the log line,
+   the test outcome. "Should be fine" / "probably" is not a report (`01-process-confirmation`).
+5. **Don't stack on an unverified premise.** If step 1 is a guess, stop and check it before building
+   steps 2-5 on top of it.
+6. **When the user reports a bug**, inspect or reproduce before proposing a fix; a fix for the wrong
+   cause costs more than the check would have.
+7. **A user's premise is checkable too.** If the code contradicts what the request assumes, say so
+   with the evidence instead of implementing on the wrong assumption.
+
 ## 10-python-odoo
 
 _Python and Odoo ORM conventions (incl. model member order)_
@@ -270,14 +310,32 @@ _XML conventions for views, data, templates, menus, and reports_
 - Keep form structure conventional: `<header>`, `<sheet>`, grouped fields, `<notebook>`, chatter when used.
 - Preserve existing groups, attrs/modifiers, context, domain, and sequence behavior unless the task targets them.
 
+# XPath
+- Select on stable hooks only: `@id`, `@name`, `@t-name`, `hasclass(...)`, or a unique structural path.
+- Do **not** write XPath that matches `@t-esc`, `@t-raw`, or `@string`. `@string` fails view validation (`View inheritance may not use attribute 'string' as a selector.`). `@t-esc`/`@t-raw` selectors die when the parent switches to `@t-out`. `--dev=qweb` logs `Found deprecated directive @t-esc`/`@t-raw` only when those directives sit on rendered QWeb nodes, not when XPath merely matches them.
+- Prefer `hasclass('foo')` over `contains(@class, 'foo')`.
+- Exception: an inherit whose **only** job is replacing a remaining upstream `@t-esc`/`@t-raw` with `@t-out` may match that directive for the replace.
+
+```xml
+<!-- BAD: selector dies when the parent switches to t-out -->
+<xpath expr="//span[@t-esc=&quot;record.name&quot;]" position="replace">
+    <span t-out="record.name"/>
+</xpath>
+<!-- GOOD -->
+<xpath expr="//span[@id='partner_name']" position="replace">
+    <span id="partner_name" t-out="record.name"/>
+</xpath>
+```
+
 # Data
 - Put seed/configuration records in `data/`; demo-only records in `demo/` and manifest `demo`.
 - Use `noupdate="1"` only for records that should not be changed by module upgrades.
 - Avoid hardcoded database IDs. Use `ref()` and external IDs.
 
 # QWeb
-- Use `t-out` for escaped output and avoid `t-raw` unless content is already sanitized HTML.
-- Inherit website/portal templates with `t-inherit` and precise XPath changes.
+- Use `@t-out` for escaped output. Do not add `@t-esc` or `@t-raw` in new `ir.ui.view` / website / portal QWeb (`t-raw` only if the value is already sanitized `Markup`).
+- OWL component templates (`static/src/**/*.xml`) may still use `t-esc` — that is OWL, not `ir.qweb`.
+- Inherit website/portal templates with `t-inherit` and precise XPath (see **XPath** above).
 - Keep translatable user-facing strings extractable.
 
 # Menus and Actions

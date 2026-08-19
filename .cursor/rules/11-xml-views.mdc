@@ -13,14 +13,32 @@ alwaysApply: false
 - Keep form structure conventional: `<header>`, `<sheet>`, grouped fields, `<notebook>`, chatter when used.
 - Preserve existing groups, attrs/modifiers, context, domain, and sequence behavior unless the task targets them.
 
+# XPath
+- Select on stable hooks only: `@id`, `@name`, `@t-name`, `hasclass(...)`, or a unique structural path.
+- Do **not** write XPath that matches `@t-esc`, `@t-raw`, or `@string`. `@string` fails view validation (`View inheritance may not use attribute 'string' as a selector.`). `@t-esc`/`@t-raw` selectors die when the parent switches to `@t-out`. `--dev=qweb` logs `Found deprecated directive @t-esc`/`@t-raw` only when those directives sit on rendered QWeb nodes, not when XPath merely matches them.
+- Prefer `hasclass('foo')` over `contains(@class, 'foo')`.
+- Exception: an inherit whose **only** job is replacing a remaining upstream `@t-esc`/`@t-raw` with `@t-out` may match that directive for the replace.
+
+```xml
+<!-- BAD: selector dies when the parent switches to t-out -->
+<xpath expr="//span[@t-esc=&quot;record.name&quot;]" position="replace">
+    <span t-out="record.name"/>
+</xpath>
+<!-- GOOD -->
+<xpath expr="//span[@id='partner_name']" position="replace">
+    <span id="partner_name" t-out="record.name"/>
+</xpath>
+```
+
 # Data
 - Put seed/configuration records in `data/`; demo-only records in `demo/` and manifest `demo`.
 - Use `noupdate="1"` only for records that should not be changed by module upgrades.
 - Avoid hardcoded database IDs. Use `ref()` and external IDs.
 
 # QWeb
-- Use `t-out` for escaped output and avoid `t-raw` unless content is already sanitized HTML.
-- Inherit website/portal templates with `t-inherit` and precise XPath changes.
+- Use `@t-out` for escaped output. Do not add `@t-esc` or `@t-raw` in new `ir.ui.view` / website / portal QWeb (`t-raw` only if the value is already sanitized `Markup`).
+- OWL component templates (`static/src/**/*.xml`) may still use `t-esc` — that is OWL, not `ir.qweb`.
+- Inherit website/portal templates with `t-inherit` and precise XPath (see **XPath** above).
 - Keep translatable user-facing strings extractable.
 
 # Menus and Actions
