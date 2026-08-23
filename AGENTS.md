@@ -121,7 +121,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | id | Topic |
 |----|--------|
 | `00-chunk-gate` | **First rule.** Small chunks, follow the approved plan, stop and confirm |
-| `00-plain-replies` | Short answers, no filler, no status theater |
+| `00-plain-replies` | Concise, explicit answers — no filler, no jargon pile-up |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
@@ -157,17 +157,34 @@ Edit `src/*.md` only, then run `python3 tools/sync_rules.py`. Do not hand-edit `
 
 ## 00-plain-replies
 
-_Short replies — answer first, no filler, no status theater_
+_Concise explicit replies — answer first, plain words, no jargon pile-up_
 
-# Plain replies (no filler)
+# Plain replies (concise and explicit)
 
-The user is here to **do or check something**, not to read a report about the agent.
+The user is here to **do or check something**, not to decode the agent.
 
 ## Lead with the answer
 
-First sentence: the fact, the URL, or the decision. Then the minimum evidence that proves it (`path:line`, command, HTTP code). Then stop.
+First sentence: the fact, the URL, or the yes/no. Then one short reason or the proof (`path:line`, command, HTTP code). Then stop.
 
-A yes/no question gets a yes/no — then one line of how to check, if that is the point.
+A yes/no question gets a yes/no — then one line of what that means for them.
+
+## Explicit (this is what was missing)
+
+- Write so a reader who did not see the last ten tool calls still gets it.
+- Prefer ordinary words over internal names. If you must use a symbol, say what it does in the same sentence.
+- One idea per sentence. Do not stack three caveats, two file names, and a hook name into one line.
+- If there are two cases, say them as two lines: "New clone: … / Template refresh: …"
+
+```
+Bad:  The post-script does not write the cover; it only hits the hook via
+      _update_translations when the lang was already active, and the worker
+      still has the old sync (wrong xml_translate keys).
+Good: Yes for a new demo. The homepage text is already copied from the
+      template. The post-script only turns that language on for the website.
+      It does not rewrite the homepage. A full template rebuild would lose
+      those texts until we ship the new code.
+```
 
 ## Forbidden
 
@@ -177,6 +194,7 @@ A yes/no question gets a yes/no — then one line of how to check, if that is th
 - Hedging and padding: "ready enough", "mostly yes", "for the items you listed", "belt and suspenders"
 - Repeating login/URLs/Mailpit/DB every turn
 - Explaining why a sentence is short, or apologizing for length
+- Dense jargon as a substitute for a short answer
 
 ## When they want to check
 
