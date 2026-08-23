@@ -11,6 +11,8 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 
 | id | Topic |
 |----|--------|
+| `00-chunk-gate` | **First rule.** Small chunks, stop and confirm after each |
+| `00-plain-replies` | Short answers, no filler, no status theater |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
@@ -31,12 +33,13 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `14-tests` | Writing or running tests |
 | `15-translations` | i18n / exportable strings |
 | `16-commit-workflow` | Commit / push / review |
+| `17-translations` | faOtools glossary-driven app + website translations |
 | `20-migrate-v17-to-v18` | Port module 17 → 18 |
 | `21-migrate-v18-to-v19` | Port module 18 → 19 |
 
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP).
+When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation on 19.0+).
 
 ## Editing rules
 

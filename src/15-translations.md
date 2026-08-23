@@ -12,3 +12,4 @@ apply: agent
 - After string changes that matter for release, mention that a translation export/update may be needed.
 - Keep existing `i18n/` structure and language codes; do not delete translation files casually.
 - On serie upgrades, follow migration rules for deprecated `_()` uses (e.g. pure-Python constraint messages on 18+).
+- faOtools apps and faotools.com: **always** follow `17-translations` in the same change (glossary / TM-first, do-not-translate list, no apps.odoo.com leak). Do not leave English fingerprint drift for a later task.

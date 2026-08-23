@@ -2,6 +2,76 @@
 
 Generated from `src/*.md` by `tools/sync_rules.py`. Do not edit by hand.
 
+## 00-chunk-gate
+
+_Work in small checkable chunks and stop for user confirmation after each one_
+
+# Chunk gate (read this before anything else)
+
+**The default mode of work is: one small chunk, then stop and wait for the user.**
+Long autonomous runs are forbidden. An agent that disappears for many tool calls and
+comes back with a finished multi-file, multi-repo change has failed the task even if
+the code is correct — the user could not steer, review, or veto anything.
+
+## What a chunk is
+
+One coherent change the user can check **in about a minute**:
+
+- typically **one repo** and **≤ ~5 files**
+- **at most one** build / test / deploy / long command
+- a single reviewable idea ("add field X", "wire payload key", "write this test")
+
+If the work does not fit that, it is **several** chunks. Split it and do the first one.
+
+## The gate
+
+After every chunk, **stop your turn** and report:
+
+1. **What changed** — exact paths, and what each edit does.
+2. **What you verified** — the command run and its real result (`06-verify-hypotheses`).
+3. **What is next** — the single next chunk.
+4. **An explicit question** — "proceed with X?" Then wait.
+
+Do **not** start the next chunk in the same turn. "It was obviously next" is not
+confirmation. Silence is not confirmation.
+
+## Planning
+
+- A plan is delivered as a **numbered list of chunks**, each with its own check, before
+  any code is written. Get the plan approved first (`04-plan-challenge`).
+- **Approving a plan approves chunk 1 only.** A plan, a todo list, a phase list, or a
+  document in the repo is a map — never a licence to run the whole route unattended.
+- Phrases like "implement the plan", "finish the todos", "continue", "do the last phase"
+  mean **the next chunk**, not all remaining work.
+- If the user explicitly says "do it all, no check-ins", honor it — and say plainly how
+  many chunks you are about to run before starting.
+
+## Hard stops (stop the turn immediately, mid-work if needed)
+
+- ~10 write operations (edits / file creations) since the last user message
+- a second repo is about to be touched
+- a manifest `version`, migration, or schema change is about to be added
+- a test / build / deploy run just finished — report it, do not keep editing
+- anything irreversible or shared: push, deploy, branch switch, delete, live write
+- the plan turned out wrong, or you found something the user does not know yet
+
+## Never
+
+- Batch unrelated fixes because "I was already in the file".
+- Add scope the user did not ask for (extra tests, refactors, doc updates, renames).
+- Keep working through a failure you have not reported.
+- Present hours of unsupervised work as a single result and ask for approval afterwards
+  — approval before the work is the whole point.
+
+## Exempt (no gate needed)
+
+- Read-only investigation: reading, grepping, searching, querying.
+- One trivial edit the user asked for literally ("fix this typo").
+- Steps inside a chunk the user just approved.
+
+This rule outranks any instinct to be efficient or "helpful" by finishing early.
+When in doubt: smaller chunk, ask sooner.
+
 ## 00-index
 
 _Index of centralized AI rules — what to read and when_
@@ -14,6 +84,8 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 
 | id | Topic |
 |----|--------|
+| `00-chunk-gate` | **First rule.** Small chunks, stop and confirm after each |
+| `00-plain-replies` | Short answers, no filler, no status theater |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
@@ -34,16 +106,47 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `14-tests` | Writing or running tests |
 | `15-translations` | i18n / exportable strings |
 | `16-commit-workflow` | Commit / push / review |
+| `17-translations` | faOtools glossary-driven app + website translations |
 | `20-migrate-v17-to-v18` | Port module 17 → 18 |
 | `21-migrate-v18-to-v19` | Port module 18 → 19 |
 
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP).
+When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation on 19.0+).
 
 ## Editing rules
 
 Edit `src/*.md` only, then run `python3 tools/sync_rules.py`. Do not hand-edit `.cursor/rules/*.mdc` or `AGENTS.md`.
+
+## 00-plain-replies
+
+_Short replies — answer first, no filler, no status theater_
+
+# Plain replies (no filler)
+
+The user is here to **do or check something**, not to read a report about the agent.
+
+## Lead with the answer
+
+First sentence: the fact, the URL, or the decision. Then the minimum evidence that proves it (`path:line`, command, HTTP code). Then stop.
+
+A yes/no question gets a yes/no — then one line of how to check, if that is the point.
+
+## Forbidden
+
+- Restating the question, narrating the plan, or "wrapping up" what the user already knows
+- Status theater: "What ran", "What I verified", "Checked on …", bullet inventories, coverage percentages, unless the user asked for an audit
+- Hedging and padding: "ready enough", "mostly yes", "for the items you listed", "belt and suspenders"
+- Repeating login/URLs/Mailpit/DB every turn
+- Explaining why a sentence is short, or apologizing for length
+
+## When they want to check
+
+Give the URL (and login **once** if they do not have it). Do not list every translated string. Do not recap the pipeline. If something is **not** ready, say that in one sentence and ask to proceed with the missing step.
+
+## Length
+
+Default: a few short sentences. A table or a file list only when it is the deliverable. Chunk-gate reports stay to the four required lines — not an essay under each heading.
 
 ## 01-process-confirmation
 
@@ -434,6 +537,7 @@ _Translation and i18n conventions for Odoo modules_
 - After string changes that matter for release, mention that a translation export/update may be needed.
 - Keep existing `i18n/` structure and language codes; do not delete translation files casually.
 - On serie upgrades, follow migration rules for deprecated `_()` uses (e.g. pure-Python constraint messages on 18+).
+- faOtools apps and faotools.com: **always** follow `17-translations` in the same change (glossary / TM-first, do-not-translate list, no apps.odoo.com leak). Do not leave English fingerprint drift for a later task.
 
 ## 16-commit-workflow
 
@@ -524,6 +628,96 @@ subjects. Recovery took two extra MRs. This gate exists so that never repeats.
 - **tools / support / life / …**: push only when the user explicitly asks; prefer leaving working-tree deletions/edits for review when trimming rules.
 - **febado**: follow febado push / MR rules (`febado-push-workflows`); never force-push shared branches unless explicitly requested.
 - Never `--no-verify` / skip hooks unless the user explicitly requests it.
+
+## 17-translations
+
+_faOtools glossary-driven translations (apps, website, TM-first, no apps.odoo.com leak)_
+
+# faOtools translations
+
+Pull this rule for any task that adds or changes user-facing strings, `.po` / `.pot` files, website/QWeb copy, `module.description` content, `module.release.description` (public changelog), or languages.
+
+Source of truth is **`support/support_translations/`** (glossary, do-not-translate list, fingerprinted TM). Odoo `.po` files and the DB loader are outputs, not the place to invent wording.
+
+## Source language
+
+- Source is **en_US**. Never translate into English. Never treat another language as source.
+- Prepublishments stay English-only workspaces. Translations are re-applied after publish (loader hook), never authored on the origin by hand.
+
+## TM-first
+
+1. Update glossary / TM YAML first.
+2. Run validators (protected terms, placeholders, XML, length).
+3. Generate `.po` or let the loader apply website/DB terms.
+4. MCP/UI spot fixes are the same loop: TM first, then apply. Never the reverse.
+
+## When source strings change
+
+If the task touches a module that already has `i18n/` or TM chunks:
+
+- Adapt those translations in the same change (or flag the English fingerprint drift).
+- Description / page copy edits must update TM for every shipped language, or leave an explicit drift item.
+- New **19.0+** public `module.release.description` rows are TM-first in the same change (`tm/website/<tech>_<serie>.yaml` `releases`, then loader). Internal `notes` and `description_html` stay English. Older-serie rows that a 19.0 page actually shows (`migration_release_ids`) are translated too. A publish of 18.0-only is not a translation target. After publish follow `ai_rules_fao` `33-faotools-release`.
+- Version ports (19.0 -> 20.0, including intermediate migration branches) **carry translations**; `copy()` keeps them, then refresh fingerprints.
+
+## Do not translate
+
+- Trademarks and product names: Odoo, faOtools, KnowSystem, module **display** names, technical names, slugs, URLs.
+- Odoo edition names stay English: Enterprise, Community, Odoo.sh, Odoo Online (`odoo_editions` in `do-not-translate.yaml`; `check_dnt_editions.py`).
+- Local technical terms: Bootstrap, Kanban, Omnibox, OWL, QWeb, JSON-LD, MCP, SMTP, IMAP.
+- Customer review quotes.
+- **faotools.com email templates are never translated.** Support-owned `mail.template` records (`support_connector`, `ticketing`, `support_teams`) pin `<field name="lang">en_US</field>`. Their `model:mail.template,*` `.po` terms stay empty. `check_mail_templates.py` fails the build if either side slips. Do not set `{{ object.lang }}`. Shipped `tools/` templates are the opposite: they must set `lang` to the recipient and fill subject/body terms.
+- Generated store blobs: `resulted_description`, `static_description`, GitHub manifest `summary`. `module.description.short_summary` **is** translated on the website; store/GitHub paths stay `en_US` (`_prepare_description`, `get_short_summary()` with `lang=en_US`).
+
+Ambiguous English (one word, several meanings) goes to the review queue with `ambiguous: true`. Ask rather than guess.
+
+## Extraction and wording
+
+- Extract `.pot` files through Odoo (`export_pot_via_odoo.py`). Do not hand-inject msgids (`ensure_pot_msgids.py` is not a source of truth). A `#: model_terms:ir.ui.view` reference must point at the view whose English arch contains the msgid (`check_pot_view_refs.py`).
+- Do not split a sentence across a link. Keep the sentence as one term (`o_translate_inline` on a wrapper whose `<a>` has no `t-` attributes, or put the whole sentence inside the `<a>`). `check_link_fragments.py` flags the split.
+- Russian action labels (buttons, wizards, menu actions) are perfective infinitive or imperative, never imperfective present (`Выбрать` not `Выбирать`). `check_action_labels` enforces the seed list.
+- VAT stays verbatim only as a **legal identifier** (`EU VAT ID: PT332289761`, `VAT PT332289761`). The tax word in running copy still follows the glossary (VAT → НДС).
+- File Manager is a UI label, not a trademark. Translate it (ru: Файловый менеджер).
+- Product **display** names stay English. Exceptions that **are** translated: the `low_sales_report` menu label, and scoring **tab / field / filter** labels (`Customer Scoring`, `Vendor Scoring`) even though the manifest name stays English.
+- `Industry` means business sector (ru Отрасль, pt Setor), not manufacturing. The glossary entry is `ambiguous: true`.
+- No shipped msgid may have an empty msgstr except do-not-translate exact matches and support `mail.template` terms (`check_empty_msgstr.py`).
+
+## Permanent gate
+
+`support/support_translations/scripts/check_translation_coverage.py` is the entry point. It runs the detectors (`check_html_structure`, `check_frontend_modules`, `check_code_terms`, `check_action_labels`, `check_dnt_editions`, `check_link_fragments`, `check_mail_templates`) and, with `--live`, crawls faotools.com pages in `en_US` vs each shipped language. `devops/run_tests.sh … 19` runs the static gate. New modules and languages must pass it rather than a later cleanup pass.
+
+Mechanisms the gate is built for:
+
+- `_()` / `_t()` literals need `#. odoo-python` / `#. odoo-javascript` in every language `.po` (`check_code_terms.py`).
+- Public OWL/JS modules must be listed in `ir.http._get_translation_frontend_modules_name` (`check_frontend_modules.py`).
+- Runtime-created `translate=True` records (`website.menu`, `module.pic.name`) need a write path plus `check_db_records.py`.
+- Odoo edition names (Enterprise, Community, Odoo.sh) stay English (`odoo_editions` in `do-not-translate.yaml`).
+- Non-void HTML must not self-close (`check_html_structure.py`).
+
+Visible leftover empty msgstrs (logger text, technical help) are a tracked follow-up, not this gate's `--full` default.
+
+## Consistency
+
+- One concept, one term, on **app UI and website**. Seed from current Odoo core/enterprise `.po`, then keep the glossary aligned after hub pulls / serie updates (two-axis drift checker).
+- Prefer similar length to English for labels and headers (per-language thresholds in TM config).
+- Arabic is RTL: check our SCSS/OWL, not only `.po` text.
+- `summary_key_words`: locale keyword research, extend-only, never a literal translation.
+
+## apps.odoo.com
+
+Store HTML and manifests stay ASCII English. Render/push paths are pinned to `en_US`. Do not ship translated `index.html` to GitHub.
+
+## Languages
+
+Shipped (module list and website list stay identical):
+
+- Bases: `ru_RU`, `fr_FR`, `de_DE`, `es_ES`, `pt_PT`, `nl_NL`, `it_IT`, `ar_001`
+- Extended: `tr_TR`, `sv_SE`, `fi_FI`, `pl_PL`, `nb_NO`, `hu_HU`, `cs_CZ`, `da_DK`
+- Country: `pt_BR`, `de_CH`, `en_GB`, `fr_BE`, `fr_CA`, `fr_CH`, `nl_BE`, `es_419`, `es_CL`
+
+Source stays `en_US` (never a target). **No language in this program is post-launch.** Production URL prefixes are Phase 11 activation.
+
+Country locales seed from the shipped **root** (`pt_PT` → `pt_BR`, `de_DE` → `de_CH`, `fr_FR` → `fr_BE` / `fr_CA` / `fr_CH`, `nl_NL` → `nl_BE`, `es_ES` → `es_419` / `es_CL`; `en_GB` from `en_US`), then every string is analyzed for that country. Do not copy the root TM. Do not treat variants as hreflang/switcher only.
 
 ## 20-migrate-v17-to-v18
 
@@ -748,6 +942,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | commit A1 | local commit only, **with** a Cursor review first |
 | commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2) |
+| prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only) |
 
 If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.
 

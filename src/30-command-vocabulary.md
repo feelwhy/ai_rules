@@ -30,6 +30,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | commit A1 | local commit only, **with** a Cursor review first |
 | commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2) |
+| prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only) |
 
 If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.
 
