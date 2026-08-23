@@ -16,6 +16,7 @@ A yes/no question gets a yes/no — then one line of how to check, if that is th
 ## Forbidden
 
 - Restating the question, narrating the plan, or "wrapping up" what the user already knows
+  (exception: while a plan is in progress, reprint it with `You are here` — `00-chunk-gate`)
 - Status theater: "What ran", "What I verified", "Checked on …", bullet inventories, coverage percentages, unless the user asked for an audit
 - Hedging and padding: "ready enough", "mostly yes", "for the items you listed", "belt and suspenders"
 - Repeating login/URLs/Mailpit/DB every turn
@@ -27,4 +28,4 @@ Give the URL (and login **once** if they do not have it). Do not list every tran
 
 ## Length
 
-Default: a few short sentences. A table or a file list only when it is the deliverable. Chunk-gate reports stay to the four required lines — not an essay under each heading.
+Default: a few short sentences. A table or a file list only when it is the deliverable. Chunk-gate reports stay to the four required lines — not an essay under each heading. When a plan is in progress, add the numbered reprint with `You are here` (and any user-commanded `skipped` highlights).

@@ -12,7 +12,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 
 | id | Topic |
 |----|--------|
-| `00-chunk-gate` | **First rule.** Small chunks, stop and confirm after each |
+| `00-chunk-gate` | **First rule.** Small chunks, follow the approved plan, stop and confirm |
 | `00-plain-replies` | Short answers, no filler, no status theater |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |

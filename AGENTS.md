@@ -46,6 +46,42 @@ confirmation. Silence is not confirmation.
 - If the user explicitly says "do it all, no check-ins", honor it — and say plainly how
   many chunks you are about to run before starting.
 
+### Follow the plan (strict)
+
+Once a plan exists, **follow that numbered list**. If it is wrong, **change the list**
+(say what changed and why), then follow the new list. Do **not** invent a second plan
+mid-flight because it “seems better” — that is how the plan becomes a mess.
+
+**Never mark a plan point completed if it is not.** This is absolute — **all cases**,
+no exceptions: not todos, not the reprinted plan, not “what changed”, not a Cursor /
+automatic plan update, not a rewrite, not a mode or branch switch, not “while I’m here”.
+Partial work stays open. “I started it” is not done. The point’s check must have passed.
+
+**Never miss a plan point** unless the user **explicitly commanded** that skip
+(“skip 3”, “drop this point”). Blocked, inconvenient, or “we’ll do it later” is **not**
+a miss — stop, leave the point open (`You are here`), and ask. An automatic plan
+update must not hide, reorder-away, or complete a point.
+
+**Audit / review findings that the plan assumes will be fixed during implementation**
+belong **inside the matching plan step** — usually the **current** one — not a sidecar
+list and not “we’ll get to it”. Fold them into that step’s work and check before calling
+the step done.
+
+**While implementing, reprint the numbered plan every turn with `You are here` on the
+current point.** Keep the original numbers. Example:
+
+```
+1. Add field X — done
+2. Wire payload — **You are here**
+3. Write the test
+4. Consider missed points
+```
+
+**Missed points (user-commanded only).** If the user explicitly said to skip a point:
+**highlight it** on the reprint (`skipped: <user command>`). Do **not** mark it
+completed. The **last plan step** is always: consider every skipped point and either
+do it, fold it into a new numbered step, or get an explicit user OK to drop it.
+
 ## Hard stops (stop the turn immediately, mid-work if needed)
 
 - ~10 write operations (edits / file creations) since the last user message
@@ -84,7 +120,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 
 | id | Topic |
 |----|--------|
-| `00-chunk-gate` | **First rule.** Small chunks, stop and confirm after each |
+| `00-chunk-gate` | **First rule.** Small chunks, follow the approved plan, stop and confirm |
 | `00-plain-replies` | Short answers, no filler, no status theater |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |
@@ -135,6 +171,7 @@ A yes/no question gets a yes/no — then one line of how to check, if that is th
 ## Forbidden
 
 - Restating the question, narrating the plan, or "wrapping up" what the user already knows
+  (exception: while a plan is in progress, reprint it with `You are here` — `00-chunk-gate`)
 - Status theater: "What ran", "What I verified", "Checked on …", bullet inventories, coverage percentages, unless the user asked for an audit
 - Hedging and padding: "ready enough", "mostly yes", "for the items you listed", "belt and suspenders"
 - Repeating login/URLs/Mailpit/DB every turn
@@ -146,7 +183,7 @@ Give the URL (and login **once** if they do not have it). Do not list every tran
 
 ## Length
 
-Default: a few short sentences. A table or a file list only when it is the deliverable. Chunk-gate reports stay to the four required lines — not an essay under each heading.
+Default: a few short sentences. A table or a file list only when it is the deliverable. Chunk-gate reports stay to the four required lines — not an essay under each heading. When a plan is in progress, add the numbered reprint with `You are here` (and any user-commanded `skipped` highlights).
 
 ## 01-process-confirmation
 
@@ -158,9 +195,9 @@ For non-trivial work (multi-file changes, deploys, branch switches, deletions, m
 
 1. **State the plan** in a short ordered list before doing irreversible steps.
 2. **Confirm with the user** at phase gates (delete duplicates, push remotes, switch shared checkout serie, `docker compose down`, live writes).
-3. **Do one phase at a time** when the plan says so; do not batch “while I’m here” deletions or refactors.
+3. **Do one phase at a time** when the plan says so; do not batch “while I’m here” deletions or refactors. Follow the approved numbered plan, or change that list and follow the new one — do not invent a parallel plan (`00-chunk-gate`).
 4. **Report outcomes** with concrete evidence (commands run, paths changed, test results) — not “should be fine”.
-5. If blocked (foreign WIP, missing permission, unclear target serie), **stop and ask** instead of improvising.
+5. If blocked (foreign WIP, missing permission, unclear target serie), **stop and ask** instead of improvising. Do not skip or mark a plan point done — blocked is not a miss (`00-chunk-gate`).
 
 Small single-file fixes in an already-agreed task do not need a ceremony gate; still avoid surprise side effects.
 
@@ -282,6 +319,19 @@ Before a large implementation or when a plan looks thin:
 3. **Point out missing gates**: tests, confirmation before delete/push/live write, which repo owns the change.
 4. **Prefer alternatives** when the proposed path fights existing rules (host Odoo, editing `odoo/` core, silent version bumps, tools-ports paths).
 5. If the user already decided, implement — but still surface blockers instead of quietly bypassing rules.
+
+## Writing and changing the plan
+
+- Numbered chunks, each with a check (`00-chunk-gate`).
+- If an audit or review assumes findings will be **fixed during implementation**, put
+  each finding **into the matching plan step** — usually the **current** step — not a
+  sidecar list. That step is not complete until those fixes are done or the user
+  **explicitly commanded** a skip (highlighted, never marked done).
+- After a plan exists: **follow it, or change the numbered list and then follow**. Do
+  not replace it with a newly invented sequence. Never mark a point done unless its
+  check passed — all cases, including automatic plan updates. Never miss a point
+  without an explicit user command. Last step is always: consider skipped points
+  (`00-chunk-gate`).
 
 ## 05-module-structure
 
