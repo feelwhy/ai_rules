@@ -19,6 +19,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `02-docker-only` | Never host venv / `odoo-bin` |
 | `03-never-discard-wip` | Do not stash/discard foreign WIP |
 | `06-verify-hypotheses` | Check the hypothesis before recommending |
+| `18-xml-translate-html` | Never empty/`<i/>` icons in `xml_translate` HTML |
 | `30-command-vocabulary` | Natural-language → concrete commands |
 
 ## Agent-requestable (pull when the task matches)
@@ -40,7 +41,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation on 19.0+).
+When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation on 19.0+). HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 

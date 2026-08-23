@@ -127,6 +127,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `02-docker-only` | Never host venv / `odoo-bin` |
 | `03-never-discard-wip` | Do not stash/discard foreign WIP |
 | `06-verify-hypotheses` | Check the hypothesis before recommending |
+| `18-xml-translate-html` | Never empty/`<i/>` icons in `xml_translate` HTML |
 | `30-command-vocabulary` | Natural-language → concrete commands |
 
 ## Agent-requestable (pull when the task matches)
@@ -148,7 +149,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation on 19.0+).
+When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation on 19.0+). HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 
@@ -708,6 +709,7 @@ If the task touches a module that already has `i18n/` or TM chunks:
 - Adapt those translations in the same change (or flag the English fingerprint drift).
 - Description / page copy edits must update TM for every shipped language, or leave an explicit drift item.
 - New **19.0+** public `module.release.description` rows are TM-first in the same change (`tm/website/<tech>_<serie>.yaml` `releases`, then loader). Internal `notes` and `description_html` stay English. Older-serie rows that a 19.0 page actually shows (`migration_release_ids`) are translated too. A publish of 18.0-only is not a translation target. After publish follow `ai_rules_fao` `33-faotools-release`.
+- Website/ticket FAQ copy lives in `tm/website/faqs/` (overlay). KnowSystem article records stay English. Do not enable KnowSystem Multi Languages. Store `/docs` / `/knowsystem` stay English.
 - Version ports (19.0 -> 20.0, including intermediate migration branches) **carry translations**; `copy()` keeps them, then refresh fingerprints.
 
 ## Do not translate
@@ -742,7 +744,7 @@ Mechanisms the gate is built for:
 - Public OWL/JS modules must be listed in `ir.http._get_translation_frontend_modules_name` (`check_frontend_modules.py`).
 - Runtime-created `translate=True` records (`website.menu`, `module.pic.name`) need a write path plus `check_db_records.py`.
 - Odoo edition names (Enterprise, Community, Odoo.sh) stay English (`odoo_editions` in `do-not-translate.yaml`).
-- Non-void HTML must not self-close (`check_html_structure.py`).
+- Non-void HTML must not self-close (`check_html_structure.py`). **Always** follow `18-xml-translate-html`: never empty `<i></i>` / `<i/>` (Odoo `xml_translate` re-serializes them and HTML5 swallows the page, including `en_US`).
 
 Visible leftover empty msgstrs (logger text, technical help) are a tracked follow-up, not this gate's `--full` default.
 
@@ -768,6 +770,45 @@ Shipped (module list and website list stay identical):
 Source stays `en_US` (never a target). **No language in this program is post-launch.** Production URL prefixes are Phase 11 activation.
 
 Country locales seed from the shipped **root** (`pt_PT` → `pt_BR`, `de_DE` → `de_CH`, `fr_FR` → `fr_BE` / `fr_CA` / `fr_CH`, `nl_NL` → `nl_BE`, `es_ES` → `es_419` / `es_CL`; `en_GB` from `en_US`), then every string is analyzed for that country. Do not copy the root TM. Do not treat variants as hreflang/switcher only.
+
+## 18-xml-translate-html
+
+_Never let xml_translate emit self-closing non-void HTML (empty FA icons break pages)_
+
+# xml_translate HTML — never self-close non-void tags
+
+Odoo `xml_translate` serializes a truly empty `<i></i>` / `<span></span>` as `<i/>` / `<span/>`. HTML5 ignores the `/`, so the tag stays open and **swallows the rest of the page** — including `en_US`. Incident 2026-08-23: app pages on faotools.com rendered as leftover icon glyphs.
+
+## Hard ban (English source, TM, MCP, QWeb, defaults)
+
+Never write:
+
+- `<i class="fa …"/>`
+- `<i class="fa …"></i>` (empty pair)
+- empty `<span></span>`, `<b></b>`, `<em></em>` used as icons/wrappers
+
+Always keep a space inside the pair:
+
+```html
+<i class="fa fa-plus text-success mr8"> </i>
+```
+
+Same for any other non-void wrapper. Void tags (`<br/>`, `<img/>`) stay void.
+
+## After every xml_translate write
+
+1. Close English with `close_self_closing_html` (`me_check_xml` / `validators`). The loader `_write_xml` must do this **after** `update_field_translations` — that call is what re-opens the hole.
+2. Do not run TM `_apply_all` without closing English again (`close_live_html_void.py`).
+3. App-page QWeb must use `safe_website_markup`, never raw `Markup()`, so a leftover `<i/>` cannot ship in HTML.
+
+## Tests that must stay green
+
+- `support_translations:TestXmlTranslateHtml`
+- `modules_website:TestSafeWebsiteMarkup`
+- `modules_website:TestAppPageFaqHttp`
+- `validators` `html_void` / `check_html_structure`
+
+A change that reintroduces empty `<i></i>` or drops the post-apply closer has failed, even if the Russian page still looks fine.
 
 ## 20-migrate-v17-to-v18
 

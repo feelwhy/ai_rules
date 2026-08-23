@@ -29,6 +29,7 @@ If the task touches a module that already has `i18n/` or TM chunks:
 - Adapt those translations in the same change (or flag the English fingerprint drift).
 - Description / page copy edits must update TM for every shipped language, or leave an explicit drift item.
 - New **19.0+** public `module.release.description` rows are TM-first in the same change (`tm/website/<tech>_<serie>.yaml` `releases`, then loader). Internal `notes` and `description_html` stay English. Older-serie rows that a 19.0 page actually shows (`migration_release_ids`) are translated too. A publish of 18.0-only is not a translation target. After publish follow `ai_rules_fao` `33-faotools-release`.
+- Website/ticket FAQ copy lives in `tm/website/faqs/` (overlay). KnowSystem article records stay English. Do not enable KnowSystem Multi Languages. Store `/docs` / `/knowsystem` stay English.
 - Version ports (19.0 -> 20.0, including intermediate migration branches) **carry translations**; `copy()` keeps them, then refresh fingerprints.
 
 ## Do not translate
@@ -63,7 +64,7 @@ Mechanisms the gate is built for:
 - Public OWL/JS modules must be listed in `ir.http._get_translation_frontend_modules_name` (`check_frontend_modules.py`).
 - Runtime-created `translate=True` records (`website.menu`, `module.pic.name`) need a write path plus `check_db_records.py`.
 - Odoo edition names (Enterprise, Community, Odoo.sh) stay English (`odoo_editions` in `do-not-translate.yaml`).
-- Non-void HTML must not self-close (`check_html_structure.py`).
+- Non-void HTML must not self-close (`check_html_structure.py`). **Always** follow `18-xml-translate-html`: never empty `<i></i>` / `<i/>` (Odoo `xml_translate` re-serializes them and HTML5 swallows the page, including `en_US`).
 
 Visible leftover empty msgstrs (logger text, technical help) are a tracked follow-up, not this gate's `--full` default.
 
