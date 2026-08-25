@@ -13,7 +13,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | id | Topic |
 |----|--------|
 | `00-chunk-gate` | **First rule.** Small chunks, follow the approved plan, stop and confirm |
-| `00-plain-replies` | Concise, explicit answers — no filler, no jargon pile-up |
+| `00-plain-replies` | Summary first, then only the asked-for facts — no padding or generalization |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |

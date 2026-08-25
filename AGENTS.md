@@ -121,7 +121,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | id | Topic |
 |----|--------|
 | `00-chunk-gate` | **First rule.** Small chunks, follow the approved plan, stop and confirm |
-| `00-plain-replies` | Concise, explicit answers — no filler, no jargon pile-up |
+| `00-plain-replies` | Summary first, then only the asked-for facts — no padding or generalization |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
@@ -157,52 +157,70 @@ Edit `src/*.md` only, then run `python3 tools/sync_rules.py`. Do not hand-edit `
 
 ## 00-plain-replies
 
-_Concise explicit replies — answer first, plain words, no jargon pile-up_
+_Summary first, then only the asked-for facts — no padding or generalization_
 
-# Plain replies (concise and explicit)
+# Plain replies (strict)
 
-The user is here to **do or check something**, not to decode the agent.
+This rule **outranks** default “be thorough / complete / helpful” instincts, including
+restating the work, defining every term, or writing a standalone essay.
 
-## Lead with the answer
+The user is here to **do or check one thing**. Answer that. Stop.
 
-First sentence: the fact, the URL, or the yes/no. Then one short reason or the proof (`path:line`, command, HTTP code). Then stop.
+## 1. Summary first (mandatory)
 
-A yes/no question gets a yes/no — then one line of what that means for them.
+Every reply **opens** with a short human-readable summary: **1–3 sentences**.
 
-## Explicit (this is what was missing)
-
-- Write so a reader who did not see the last ten tool calls still gets it.
-- Prefer ordinary words over internal names. If you must use a symbol, say what it does in the same sentence.
-- One idea per sentence. Do not stack three caveats, two file names, and a hook name into one line.
-- If there are two cases, say them as two lines: "New clone: … / Template refresh: …"
+- A non-specialist can act on it (yes/no, the fact, the URL, what to do next).
+- Ordinary words. No file dumps, no symbol lists, no “I checked…”.
+- Then **stop**, unless one proof line or one next question is required.
 
 ```
-Bad:  The post-script does not write the cover; it only hits the hook via
-      _update_translations when the lang was already active, and the worker
-      still has the old sync (wrong xml_translate keys).
+Bad:  I reviewed the loader, the TM apply path, and the QWeb wrapper. The
+      post-script does not write the cover; it only hits the hook via
+      _update_translations when the lang was already active…
 Good: Yes for a new demo. The homepage text is already copied from the
-      template. The post-script only turns that language on for the website.
-      It does not rewrite the homepage. A full template rebuild would lose
-      those texts until we ship the new code.
+      template. The post-script only turns that language on.
 ```
 
-## Forbidden
+A yes/no question gets **yes** or **no** in sentence one, then one line of what
+that means for them.
 
-- Restating the question, narrating the plan, or "wrapping up" what the user already knows
+## 2. Precision — no extra scope
+
+- Answer **only** what was asked. Do not add alternatives, architecture, or
+  “while we’re here” steps.
+- Do **not** generalize (“in Odoo you typically…”, “best practice is…”) unless
+  they asked for a general rule. Speak about **this** repo, serie, and check.
+- One idea per sentence. Two cases = two short lines, not a blended paragraph.
+- If a symbol is required, say what it does in the same sentence.
+- One proof is enough (`path:line`, command + result, HTTP code). Not a tour.
+
+## 3. Forbidden
+
+- Restating the question, narrating the plan, or wrapping up what they already know
   (exception: while a plan is in progress, reprint it with `You are here` — `00-chunk-gate`)
-- Status theater: "What ran", "What I verified", "Checked on …", bullet inventories, coverage percentages, unless the user asked for an audit
-- Hedging and padding: "ready enough", "mostly yes", "for the items you listed", "belt and suspenders"
-- Repeating login/URLs/Mailpit/DB every turn
-- Explaining why a sentence is short, or apologizing for length
+- Status theater: “What ran”, “What I verified”, “Checked on …”, bullet inventories,
+  coverage percentages — unless they asked for an audit
+- Hedging and padding: “ready enough”, “mostly yes”, “for the items you listed”
+- Repeating login / URLs / Mailpit / DB every turn
+- Explaining why the answer is short, or apologizing for length
+- Teaching Odoo / Python / Docker basics they did not ask for
 - Dense jargon as a substitute for a short answer
 
-## When they want to check
+## 4. When they want to check
 
-Give the URL (and login **once** if they do not have it). Do not list every translated string. Do not recap the pipeline. If something is **not** ready, say that in one sentence and ask to proceed with the missing step.
+Give the URL (and login **once** if they do not have it). Do not list every string
+or recap the pipeline. If something is **not** ready, say that in one sentence and
+ask to proceed with the missing step.
 
-## Length
+## 5. Length
 
-Default: a few short sentences. A table or a file list only when it is the deliverable. Chunk-gate reports stay to the four required lines — not an essay under each heading. When a plan is in progress, add the numbered reprint with `You are here` (and any user-commanded `skipped` highlights).
+Default: **summary + at most a few sentences**. A table or file list only when it
+**is** the deliverable.
+
+Chunk-gate reports: summary first, then the four required lines — not an essay
+under each heading. When a plan is in progress, add the numbered reprint with
+`You are here` (and any user-commanded `skipped` highlights).
 
 ## 01-process-confirmation
 
