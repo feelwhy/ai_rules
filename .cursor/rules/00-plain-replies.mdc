@@ -54,8 +54,10 @@ that means for them.
 ## 4. When they want to check
 
 Give the URL (and login **once** if they do not have it). Do not list every string
-or recap the pipeline. If something is **not** ready, say that in one sentence and
-ask to proceed with the missing step.
+or recap the pipeline. If something is **not** ready **and they did not already
+ask you to do it**, say that in one sentence and ask to proceed with the missing
+step. If they already said commit / commit (a) / close the case, do the pin and
+local commit — do not ask.
 
 ## 5. Length
 

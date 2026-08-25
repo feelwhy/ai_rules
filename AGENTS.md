@@ -35,6 +35,10 @@ After every chunk, **stop your turn** and report:
 Do **not** start the next chunk in the same turn. "It was obviously next" is not
 confirmation. Silence is not confirmation.
 
+Do **not** ask for confirmation of an action the user already requested in this
+message. If they said "commit" / "commit (a)" / "do X", do that now — the
+post-chunk question is never "proceed with the commit?" / "proceed with X?".
+
 ## Planning
 
 - A plan is delivered as a **numbered list of chunks**, each with its own check, before
@@ -210,8 +214,10 @@ that means for them.
 ## 4. When they want to check
 
 Give the URL (and login **once** if they do not have it). Do not list every string
-or recap the pipeline. If something is **not** ready, say that in one sentence and
-ask to proceed with the missing step.
+or recap the pipeline. If something is **not** ready **and they did not already
+ask you to do it**, say that in one sentence and ask to proceed with the missing
+step. If they already said commit / commit (a) / close the case, do the pin and
+local commit — do not ask.
 
 ## 5. Length
 
@@ -653,6 +659,8 @@ febado’s stricter policy.
 
 - **Bare “commit” means mode A.** Never push in mode A — not “while I’m here”, not because the
  branch looks ready.
+- **Never re-ask.** If the user said commit / commit A / commit (a) / commit the case, do the
+ local commit. Do not ask “proceed with the local commit?” or wait for a second confirmation.
 - **Every B mode is gated on tests**: run the relevant tests for the changed module(s) first and
  report the result. Failing, skipped, or un-runnable tests → **stop and ask**; do not push.
 - Mode A does not require a test run, but never commit knowingly broken code, and say plainly
@@ -1064,7 +1072,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | is \<target\> ready to launch? | `faotools_env/local/env-prepare.sh --check` |
 | launch / start febado | febado `scripts/docker-dev.sh start` (no `--no-logs`) + febado local Docker rules — not `env-up`. Same Cursor log tab as faOtools (`febado Odoo logs`) |
 | test febado module | febado `scripts/test.sh` (in-repo) |
-| commit / commit A | prepare the **local** commit only — never push, no review (`16-commit-workflow`) |
+| commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
 | (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
 | commit A1 | local commit only, **with** a Cursor review first |
 | commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |

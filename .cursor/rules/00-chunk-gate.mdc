@@ -32,6 +32,10 @@ After every chunk, **stop your turn** and report:
 Do **not** start the next chunk in the same turn. "It was obviously next" is not
 confirmation. Silence is not confirmation.
 
+Do **not** ask for confirmation of an action the user already requested in this
+message. If they said "commit" / "commit (a)" / "do X", do that now — the
+post-chunk question is never "proceed with the commit?" / "proceed with X?".
+
 ## Planning
 
 - A plan is delivered as a **numbered list of chunks**, each with its own check, before

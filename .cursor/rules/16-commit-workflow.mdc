@@ -26,6 +26,8 @@ febado’s stricter policy.
 
 - **Bare “commit” means mode A.** Never push in mode A — not “while I’m here”, not because the
  branch looks ready.
+- **Never re-ask.** If the user said commit / commit A / commit (a) / commit the case, do the
+ local commit. Do not ask “proceed with the local commit?” or wait for a second confirmation.
 - **Every B mode is gated on tests**: run the relevant tests for the changed module(s) first and
  report the result. Failing, skipped, or un-runnable tests → **stop and ask**; do not push.
 - Mode A does not require a test run, but never commit knowingly broken code, and say plainly

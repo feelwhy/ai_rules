@@ -24,7 +24,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | is \<target\> ready to launch? | `faotools_env/local/env-prepare.sh --check` |
 | launch / start febado | febado `scripts/docker-dev.sh start` (no `--no-logs`) + febado local Docker rules — not `env-up`. Same Cursor log tab as faOtools (`febado Odoo logs`) |
 | test febado module | febado `scripts/test.sh` (in-repo) |
-| commit / commit A | prepare the **local** commit only — never push, no review (`16-commit-workflow`) |
+| commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
 | (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
 | commit A1 | local commit only, **with** a Cursor review first |
 | commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |
