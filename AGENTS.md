@@ -125,7 +125,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | id | Topic |
 |----|--------|
 | `00-chunk-gate` | **First rule.** Small chunks, follow the approved plan, stop and confirm |
-| `00-plain-replies` | Summary first, then only the asked-for facts — no padding or generalization |
+| `00-plain-replies` | Summary first, then only the asked-for facts; technical asks include the how |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
@@ -153,7 +153,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation on 19.0+). HTML in those fields must follow always-on `18-xml-translate-html`.
+When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation **and live loader apply** on 19.0+; never skip unless the user explicitly says to). HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 
@@ -161,7 +161,7 @@ Edit `src/*.md` only, then run `python3 tools/sync_rules.py`. Do not hand-edit `
 
 ## 00-plain-replies
 
-_Summary first, then only the asked-for facts — no padding or generalization_
+_Summary first, then only the asked-for facts — technical asks include the how_
 
 # Plain replies (strict)
 
@@ -219,7 +219,18 @@ ask you to do it**, say that in one sentence and ask to proceed with the missing
 step. If they already said commit / commit (a) / close the case, do the pin and
 local commit — do not ask.
 
-## 5. Length
+## 5. When offering options
+
+Any time the user is given a choice — in reply text **or** a multiple-choice
+question form — every option carries its **pros and cons** (one short line each
+is enough). An option list without trade-offs is not a decision aid.
+
+- In a form, put the pros/cons in the option label or the question prompt so
+  they are visible at pick time.
+- Still recommend one option and say why in one sentence.
+- Options nobody should pick are left out, not listed with empty cons.
+
+## 6. Length
 
 Default: **summary + at most a few sentences**. A table or file list only when it
 **is** the deliverable.
@@ -227,6 +238,14 @@ Default: **summary + at most a few sentences**. A table or file list only when i
 Chunk-gate reports: summary first, then the four required lines — not an essay
 under each heading. When a plan is in progress, add the numbered reprint with
 `You are here` (and any user-commanded `skipped` highlights).
+
+## 7. Technical asks include the how
+
+When you ask the user to do a technical step, **give the how in the same
+reply** — exact file or command, one undo, and which machine it hits
+(Windows vs WSL). Short. No lecture.
+
+Do not write a bare “block X / clear Y / restart Z”.
 
 ## 01-process-confirmation
 
@@ -752,7 +771,7 @@ If the task touches a module that already has `i18n/` or TM chunks:
 
 - Adapt those translations in the same change (or flag the English fingerprint drift).
 - Description / page copy edits must update TM for every shipped language, or leave an explicit drift item.
-- New **19.0+** public `module.release.description` rows are TM-first in the same change (`tm/website/<tech>_<serie>.yaml` `releases`, then loader). Internal `notes` and `description_html` stay English. Older-serie rows that a 19.0 page actually shows (`migration_release_ids`) are translated too. A publish of 18.0-only is not a translation target. After publish follow `ai_rules_fao` `33-faotools-release`.
+- New **19.0+** public `module.release.description` rows are TM-first **and loader-applied on faotools.com in the same change** (`tm/website/<tech>_<serie>.yaml` `releases`, then MCP `_apply_description`). The release is not done while `/ru/` still shows English. Skip that apply only if the user **explicitly** says to skip translations. Internal `notes` and `description_html` stay English. Older-serie rows that a 19.0 page actually shows (`migration_release_ids`) are translated too. A publish of 18.0-only is not a translation target. After publish follow `ai_rules_fao` `33-faotools-release`.
 - Website/ticket FAQ copy lives in `tm/website/faqs/` (overlay). KnowSystem article records stay English. Do not enable KnowSystem Multi Languages. Store `/docs` / `/knowsystem` stay English.
 - Version ports (19.0 -> 20.0, including intermediate migration branches) **carry translations**; `copy()` keeps them, then refresh fingerprints.
 
@@ -1077,7 +1096,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | commit A1 | local commit only, **with** a Cursor review first |
 | commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2) |
-| prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only) |
+| prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). On 19.0+ **always** finish step 8 (TM + live loader apply) in the same job; skip translations only if the user **explicitly** says so |
 
 If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.
 

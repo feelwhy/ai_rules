@@ -1,5 +1,5 @@
 ---
-description: Summary first, then only the asked-for facts — no padding or generalization
+description: Summary first, then only the asked-for facts — technical asks include the how
 alwaysApply: true
 ---
 
@@ -59,7 +59,18 @@ ask you to do it**, say that in one sentence and ask to proceed with the missing
 step. If they already said commit / commit (a) / close the case, do the pin and
 local commit — do not ask.
 
-## 5. Length
+## 5. When offering options
+
+Any time the user is given a choice — in reply text **or** a multiple-choice
+question form — every option carries its **pros and cons** (one short line each
+is enough). An option list without trade-offs is not a decision aid.
+
+- In a form, put the pros/cons in the option label or the question prompt so
+  they are visible at pick time.
+- Still recommend one option and say why in one sentence.
+- Options nobody should pick are left out, not listed with empty cons.
+
+## 6. Length
 
 Default: **summary + at most a few sentences**. A table or file list only when it
 **is** the deliverable.
@@ -67,3 +78,11 @@ Default: **summary + at most a few sentences**. A table or file list only when i
 Chunk-gate reports: summary first, then the four required lines — not an essay
 under each heading. When a plan is in progress, add the numbered reprint with
 `You are here` (and any user-commanded `skipped` highlights).
+
+## 7. Technical asks include the how
+
+When you ask the user to do a technical step, **give the how in the same
+reply** — exact file or command, one undo, and which machine it hits
+(Windows vs WSL). Short. No lecture.
+
+Do not write a bare “block X / clear Y / restart Z”.

@@ -28,7 +28,7 @@ If the task touches a module that already has `i18n/` or TM chunks:
 
 - Adapt those translations in the same change (or flag the English fingerprint drift).
 - Description / page copy edits must update TM for every shipped language, or leave an explicit drift item.
-- New **19.0+** public `module.release.description` rows are TM-first in the same change (`tm/website/<tech>_<serie>.yaml` `releases`, then loader). Internal `notes` and `description_html` stay English. Older-serie rows that a 19.0 page actually shows (`migration_release_ids`) are translated too. A publish of 18.0-only is not a translation target. After publish follow `ai_rules_fao` `33-faotools-release`.
+- New **19.0+** public `module.release.description` rows are TM-first **and loader-applied on faotools.com in the same change** (`tm/website/<tech>_<serie>.yaml` `releases`, then MCP `_apply_description`). The release is not done while `/ru/` still shows English. Skip that apply only if the user **explicitly** says to skip translations. Internal `notes` and `description_html` stay English. Older-serie rows that a 19.0 page actually shows (`migration_release_ids`) are translated too. A publish of 18.0-only is not a translation target. After publish follow `ai_rules_fao` `33-faotools-release`.
 - Website/ticket FAQ copy lives in `tm/website/faqs/` (overlay). KnowSystem article records stay English. Do not enable KnowSystem Multi Languages. Store `/docs` / `/knowsystem` stay English.
 - Version ports (19.0 -> 20.0, including intermediate migration branches) **carry translations**; `copy()` keeps them, then refresh fingerprints.
 

@@ -13,7 +13,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | id | Topic |
 |----|--------|
 | `00-chunk-gate` | **First rule.** Small chunks, follow the approved plan, stop and confirm |
-| `00-plain-replies` | Summary first, then only the asked-for facts — no padding or generalization |
+| `00-plain-replies` | Summary first, then only the asked-for facts; technical asks include the how |
 | `00-index` | This map |
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
@@ -41,7 +41,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation on 19.0+). HTML in those fields must follow always-on `18-xml-translate-html`.
+When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation **and live loader apply** on 19.0+; never skip unless the user explicitly says to). HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 
