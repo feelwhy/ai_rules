@@ -17,6 +17,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
 | `03-never-discard-wip` | Do not stash/discard foreign WIP |
+| `07-parallel-sessions` | Coordinate parallel chats on shared code and DBs |
 | `06-verify-hypotheses` | Check the hypothesis before recommending |
 | `18-xml-translate-html` | Never empty/`<i/>` icons in `xml_translate` HTML |
 | `30-command-vocabulary` | Natural-language → concrete commands |

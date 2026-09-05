@@ -9,7 +9,8 @@ apply: always
 This worktree is shared across parallel Cursor sessions and human edits.
 **Reverting, discarding, or parking someone else's changes without an explicit
 user OK is absolutely unacceptable.** "It looked unrelated to my task" is not
-permission.
+permission. Coordinating those other chats (same DB, same branch) is
+`07-parallel-sessions`.
 
 ## Hard bans (unless the user explicitly asks)
 
