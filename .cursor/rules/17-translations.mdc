@@ -76,6 +76,47 @@ Visible leftover empty msgstrs (logger text, technical help) are a tracked follo
 - Arabic is RTL: check our SCSS/OWL, not only `.po` text.
 - `summary_key_words`: locale keyword research, extend-only, never a literal translation.
 
+## Closing an "empty msgstr" backlog — do it exhaustively, not in samples
+
+A request to "translate the missing strings" means **every** shipped language on **every**
+touched (or scanned) module, not the 8 base languages, not the "important" ones. Treat the
+8-language set as a sampling shortcut only when the user says so explicitly; otherwise scope
+to the full list in **Languages** below (currently 42 codes) from the start, so the work is not
+redone after someone points out the narrower scope was wrong.
+
+1. **Scan against `.po` msgstr, not against a fixed language subset.** Build the worklist from
+ `const.SHIPPED_LANGS` / `const.PO_STEM_TO_LANG`, not a hand-typed list — a hand-typed list
+ silently drops languages.
+2. **Map language code -> file stem before touching a file.** `PO_STEM_TO_LANG` inverts to
+ `LANG_TO_STEM`; a batch script keyed by full lang code (`el_GR`) that assumes the file is
+ `el_GR.po` will silently miss `el.po`. After every batch apply, list the file stems the batch
+ actually touched and diff them against the language list it claimed to cover.
+3. **A msgstr of only whitespace is not "empty."** `msgstr " "` is a deliberate placeholder
+ (e.g. an Arabic RTL glyph with no visible text). A completeness check based on `str.strip()`
+ will re-flag it forever; check for `msgstr ""` (true empty) and treat a non-empty whitespace
+ value as already decided.
+4. **Before filling any `mail.template`-sourced term, check the exemption.** A `.po` entry whose
+ **only** `#:` reference is `model:mail.template,` on a support-owned template
+ (`support_connector`, `ticketing`, `support_teams`) must stay empty (see **Do not translate**).
+ Read the template's `lang` field and run `check_mail_templates.py` before and after the batch —
+ filling one of these is a regression, not progress, even though it looks like closing a gap.
+5. **Source words that duplicate Odoo core verbatim from core's own `.po`.** When a msgid is a
+ literal reuse of a core model/field/product display name (its `#:` ref is a core `ir.model` /
+ `ir.model.fields` / `product.template` xmlid, not a module-owned one), pull the translation from
+ that same string in `odoo/addons/<module>/i18n/` (or `odoo/odoo/addons/base/i18n/` for `base`)
+ instead of inventing wording — keeps the term consistent with the rest of the UI. Fall back to
+ the parent locale for a country variant missing the entry (e.g. `fr_CA` -> `fr`), and hand-fill
+ only the handful of languages core does not ship at all.
+6. **Verify with an independent re-scan, not the apply script's own report.** "0 missing" from
+ the batch-apply tool only means every msgid it was given landed somewhere; it does not mean the
+ module has zero empty `msgstr` left (a string outside that batch, or one the original scan
+ missed, can still be empty). Re-parse every touched module's `.po` files with `polib` and
+ recount true empties before calling a module done.
+7. **Finish with one full-repo re-scan across every repo that ships `.po` files** (`tools`,
+ `support`, `system`, `odoo-apps-addons`, `life`) against the complete language list, cross-
+ referenced against `do-not-translate.yaml` and the mail-template exemption, before reporting
+ "all languages done." A per-module "looks complete" is not the same claim.
+
 ## apps.odoo.com
 
 Store HTML and manifests stay ASCII English. Render/push paths are pinned to `en_US`. Do not ship translated `index.html` to GitHub.

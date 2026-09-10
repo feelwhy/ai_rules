@@ -35,6 +35,9 @@ confirmation. Silence is not confirmation.
 Do **not** ask for confirmation of an action the user already requested in this
 message. If they said "commit" / "commit (a)" / "do X", do that now — the
 post-chunk question is never "proceed with the commit?" / "proceed with X?".
+If they said **commit B / B1 / B2** / “push” / “open the MR”, that request **is**
+local Docker tests → check → fix → then MR (`16-commit-workflow`). Do not skip
+the local run, and do not ask “proceed with the MR?” after it is green.
 
 ## Planning
 
@@ -89,7 +92,12 @@ do it, fold it into a new numbered step, or get an explicit user OK to drop it.
 - a second repo is about to be touched
 - a manifest `version`, migration, or schema change is about to be added
 - a test / build / deploy run just finished — report it, do not keep editing
+  (**except B / B1 / B2**: red → fix and re-run locally; green → continue to
+  review + push. Do **not** skip the local run to avoid this stop, and do **not**
+  treat GitLab as the test run.)
 - anything irreversible or shared: push, deploy, branch switch, delete, live write
+  (**except** the push / MR that is the last step of a B* the user already asked
+  for, and only after local tests are green)
 - the plan turned out wrong, or you found something the user does not know yet
 
 ## Never

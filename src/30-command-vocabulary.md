@@ -28,8 +28,8 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
 | (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
 | commit A1 | local commit only, **with** a Cursor review first |
-| commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |
-| commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2) |
+| commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
+| commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
 | prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). On 19.0+ **always** finish step 8 (TM + live loader apply) in the same job; skip translations only if the user **explicitly** says so |
 
 If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.

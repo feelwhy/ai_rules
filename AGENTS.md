@@ -38,6 +38,9 @@ confirmation. Silence is not confirmation.
 Do **not** ask for confirmation of an action the user already requested in this
 message. If they said "commit" / "commit (a)" / "do X", do that now — the
 post-chunk question is never "proceed with the commit?" / "proceed with X?".
+If they said **commit B / B1 / B2** / “push” / “open the MR”, that request **is**
+local Docker tests → check → fix → then MR (`16-commit-workflow`). Do not skip
+the local run, and do not ask “proceed with the MR?” after it is green.
 
 ## Planning
 
@@ -92,7 +95,12 @@ do it, fold it into a new numbered step, or get an explicit user OK to drop it.
 - a second repo is about to be touched
 - a manifest `version`, migration, or schema change is about to be added
 - a test / build / deploy run just finished — report it, do not keep editing
+  (**except B / B1 / B2**: red → fix and re-run locally; green → continue to
+  review + push. Do **not** skip the local run to avoid this stop, and do **not**
+  treat GitLab as the test run.)
 - anything irreversible or shared: push, deploy, branch switch, delete, live write
+  (**except** the push / MR that is the last step of a B* the user already asked
+  for, and only after local tests are green)
 - the plan turned out wrong, or you found something the user does not know yet
 
 ## Never
@@ -754,18 +762,36 @@ febado’s stricter policy.
 |-----------|------|------|-------|--------|
 | “commit”, “commit A”, “commit mode A” | **A** | no | not required | no review |
 | “commit A1” | **A1** | no | not required | **review first** |
-| “commit B”, “commit mode B”, “commit and push”, “push” | **B** | yes | **required** | **offer** a Cursor review before pushing |
-| “commit B1” | **B1** | yes | **required** | **review first** (no need to ask) |
-| “commit B2” | **B2** | yes | **required** | no review — push directly |
+| “commit B”, “commit mode B”, “commit and push”, “push” | **B** | yes, **after** local tests | **local Docker, then fix** | **offer** a Cursor review before pushing |
+| “commit B1” | **B1** | yes, **after** local tests | **local Docker, then fix** | **review first** (no need to ask) |
+| “commit B2” | **B2** | yes, **after** local tests | **local Docker, then fix** | no review — push directly |
 
 - **Bare “commit” means mode A.** Never push in mode A — not “while I’m here”, not because the
- branch looks ready.
+  branch looks ready.
 - **Never re-ask.** If the user said commit / commit A / commit (a) / commit the case, do the
- local commit. Do not ask “proceed with the local commit?” or wait for a second confirmation.
-- **Every B mode is gated on tests**: run the relevant tests for the changed module(s) first and
- report the result. Failing, skipped, or un-runnable tests → **stop and ask**; do not push.
+  local commit. Do not ask “proceed with the local commit?” or wait for a second confirmation.
 - Mode A does not require a test run, but never commit knowingly broken code, and say plainly
- whether tests were run.
+  whether tests were run.
+
+### B / B1 / B2 — local tests → check → fix → then MR (HARD)
+
+Order is fixed. Do not reorder. Do not skip. This is the whole B* request — do not
+stop after tests to ask “proceed with the MR?”, and do not skip tests to finish the
+push.
+
+1. **Run** the relevant tests **locally in Docker** for every changed module
+   (`env-up.sh demo<N>[e] --test <module>`, `support/devops/run_tests.sh`,
+   febado `scripts/test.sh`).
+2. **Check** the real output in this chat (command + pass/fail).
+3. **Fix** failures and **re-run the same local command** until green. Un-runnable →
+   stop and ask. Do not push.
+4. **Then** review (B1 / offered B) → commit if needed → push / open the MR.
+
+**GitLab CI is not step 1.** Watching a pipeline does not replace the local run.
+**No local test command output in this chat → no `git push`, no MR, no MWPS.**
+Speed, chunk-gate, `:23069` going into test mode, “CI will catch it”, or “Mode A
+already committed” are not exceptions. After `test.sh`, restart the Febado stack
+if the user still needs the browser.
 - **Review = Cursor review of the local changes** (Bugbot subagent; add a security review when the
  change touches auth, ACL, controllers, or secrets). Fix or report its findings **before** pushing.
 - **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
@@ -808,7 +834,8 @@ subjects. Recovery took two extra MRs. This gate exists so that never repeats.
 ## Before committing
 
 0. Run the **delivery gate** above; a push must not start while shippable work is unaccounted for.
-1. Run the **relevant tests** for the changed module(s) via Docker (`env-up … --test`, `support/devops/run_tests.sh`, or febado `scripts/test.sh`). Do not commit knowingly broken behavior.
+1. On **B / B1 / B2**: finish the **local tests → check → fix** sequence above before
+   any push or MR. Do not commit knowingly broken behavior.
 2. `git status` / `git diff` — commit only paths belonging to this task; respect never-discard-WIP.
 3. Follow the repo’s existing commit-message style (focus on why).
 
@@ -901,6 +928,47 @@ Visible leftover empty msgstrs (logger text, technical help) are a tracked follo
 - Prefer similar length to English for labels and headers (per-language thresholds in TM config).
 - Arabic is RTL: check our SCSS/OWL, not only `.po` text.
 - `summary_key_words`: locale keyword research, extend-only, never a literal translation.
+
+## Closing an "empty msgstr" backlog — do it exhaustively, not in samples
+
+A request to "translate the missing strings" means **every** shipped language on **every**
+touched (or scanned) module, not the 8 base languages, not the "important" ones. Treat the
+8-language set as a sampling shortcut only when the user says so explicitly; otherwise scope
+to the full list in **Languages** below (currently 42 codes) from the start, so the work is not
+redone after someone points out the narrower scope was wrong.
+
+1. **Scan against `.po` msgstr, not against a fixed language subset.** Build the worklist from
+ `const.SHIPPED_LANGS` / `const.PO_STEM_TO_LANG`, not a hand-typed list — a hand-typed list
+ silently drops languages.
+2. **Map language code -> file stem before touching a file.** `PO_STEM_TO_LANG` inverts to
+ `LANG_TO_STEM`; a batch script keyed by full lang code (`el_GR`) that assumes the file is
+ `el_GR.po` will silently miss `el.po`. After every batch apply, list the file stems the batch
+ actually touched and diff them against the language list it claimed to cover.
+3. **A msgstr of only whitespace is not "empty."** `msgstr " "` is a deliberate placeholder
+ (e.g. an Arabic RTL glyph with no visible text). A completeness check based on `str.strip()`
+ will re-flag it forever; check for `msgstr ""` (true empty) and treat a non-empty whitespace
+ value as already decided.
+4. **Before filling any `mail.template`-sourced term, check the exemption.** A `.po` entry whose
+ **only** `#:` reference is `model:mail.template,` on a support-owned template
+ (`support_connector`, `ticketing`, `support_teams`) must stay empty (see **Do not translate**).
+ Read the template's `lang` field and run `check_mail_templates.py` before and after the batch —
+ filling one of these is a regression, not progress, even though it looks like closing a gap.
+5. **Source words that duplicate Odoo core verbatim from core's own `.po`.** When a msgid is a
+ literal reuse of a core model/field/product display name (its `#:` ref is a core `ir.model` /
+ `ir.model.fields` / `product.template` xmlid, not a module-owned one), pull the translation from
+ that same string in `odoo/addons/<module>/i18n/` (or `odoo/odoo/addons/base/i18n/` for `base`)
+ instead of inventing wording — keeps the term consistent with the rest of the UI. Fall back to
+ the parent locale for a country variant missing the entry (e.g. `fr_CA` -> `fr`), and hand-fill
+ only the handful of languages core does not ship at all.
+6. **Verify with an independent re-scan, not the apply script's own report.** "0 missing" from
+ the batch-apply tool only means every msgid it was given landed somewhere; it does not mean the
+ module has zero empty `msgstr` left (a string outside that batch, or one the original scan
+ missed, can still be empty). Re-parse every touched module's `.po` files with `polib` and
+ recount true empties before calling a module done.
+7. **Finish with one full-repo re-scan across every repo that ships `.po` files** (`tools`,
+ `support`, `system`, `odoo-apps-addons`, `life`) against the complete language list, cross-
+ referenced against `do-not-translate.yaml` and the mail-template exemption, before reporting
+ "all languages done." A per-module "looks complete" is not the same claim.
 
 ## apps.odoo.com
 
@@ -1179,8 +1247,8 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
 | (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
 | commit A1 | local commit only, **with** a Cursor review first |
-| commit B / commit and push / push | **tests** → commit → push; review unspecified → **offer** a review before pushing |
-| commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2) |
+| commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
+| commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
 | prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). On 19.0+ **always** finish step 8 (TM + live loader apply) in the same job; skip translations only if the user **explicitly** says so |
 
 If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.
