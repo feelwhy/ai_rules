@@ -38,6 +38,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `17-translations` | faOtools glossary-driven app + website translations |
 | `20-migrate-v17-to-v18` | Port module 17 → 18 |
 | `21-migrate-v18-to-v19` | Port module 18 → 19 |
+| `22-migrate-v19-to-v20` | Port module 19 → 20 (via saas-19.4); living rule + `tools/check_migrate_v20.py` |
 
 ## Companion repo
 

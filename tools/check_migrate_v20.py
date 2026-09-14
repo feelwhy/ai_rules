@@ -1,0 +1,1337 @@
+#!/usr/bin/env python3
+"""Mechanical checks for the Odoo 19 -> 20 port (companion to rule 22-migrate-v19-to-v20).
+
+Reads a repo of Odoo addons and target core/enterprise git refs, then reports the breaks that
+phase-1 analysis proved are findable statically:
+
+  dead-hook    an override of a core hook that no longer exists ON THE INHERITED MODEL
+  js-import    an `@mod/path` import that resolves to no file in odoo or enterprise
+  view-xmlid   an `inherit_id` ref to a core view that no longer exists
+  field-lit         a literal use of a removed field name (`datas`, `product_uom`)
+  js-symbol         a named import whose file still exists but the export does not
+  owl-xpath         an OWL t-inherit XPath selecting @t-ref / @t-esc on a core template
+  owl-tref          an OWL-2 named t-ref / t-model / t-portal in our own static/src template
+  owl-hook          useEffect(fn, deps) from @odoo/owl — OWL 3 ignores the deps array
+  python-api        a call to a core method gone at the target (get_param / set_param)
+  patch-target      a `patch()` on an import path that no longer resolves
+  patch-shadow      a prototype patch of a member upstream declares as a class field
+  manifest-version  a serie-prefixed manifest version while --odoo-ref is a saas-* branch
+
+Design notes that matter (learned the hard way in phase 1):
+
+* Hook existence is resolved against the *inherited model*, not a global name search. A global
+  grep both hides dead hooks (name survives on an unrelated model) and invents false ones
+  (module-internal super() chains whose name never existed upstream).
+* Every existence check spans odoo AND enterprise. An odoo-only pass reports `@web_gantt/*` and
+  `@documents/*` as missing.
+* Counts are derived from `ast` / XML parsing, never regex, and occurrence counts are never
+  presented as a work estimate.
+* Nothing here proves a working port. Runtime gates still apply (see rule 22).
+
+Usage:
+  python3 tools/check_migrate_v20.py --repo /path/to/tools \
+      --odoo /path/to/odoo --odoo-ref origin/saas-19.4 \
+      --enterprise /path/to/enterprise --enterprise-ref origin/saas-19.4 \
+      [--modules a,b,c] [--json] [--quiet]
+
+Exit code 1 if any finding is reported, else 0.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import os
+import re
+import subprocess
+import sys
+from collections import defaultdict
+from functools import lru_cache
+
+# Field names removed upstream whose literal use fails silently (rule 22).
+REMOVED_FIELD_LITERALS = {
+    "datas": "ir.attachment.datas removed; use raw (bytes, not base64). Writes are silently dropped.",
+    "product_uom": "stock.move.product_uom renamed uom_id. NOTE: sale.order.line / "
+                   "product.supplierinfo legitimately use product_uom_id - check the model.",
+}
+
+# Security models unified into `ir.access` (rule 22). Keyed by the model name a data
+# file declares, which is also the CSV file stem. Reported only when the old model is
+# absent AND the successor present at the target ref, so a run against a serie that
+# still has them stays silent.
+RENAMED_SECURITY_MODELS = {
+    "ir.rule": (
+        "ir.access",
+        "record rules and ACLs are one model now. XML: model=\"ir.access\", "
+        "domain_force -> domain, perm_* -> operation (a subset of 'crud'), "
+        "groups (M2M) -> group_id (one record per group). An empty group_id is a "
+        "RESTRICTION, which is what a rule with no groups used to mean; a group_id "
+        "makes it a PERMISSION.",
+    ),
+    "ir.model.access": (
+        "ir.access",
+        "rename the file to security/ir.access.csv and the manifest entry with it. "
+        "Header: id,name,model_id,group_id/id,operation,domain. model_id is the "
+        "technical model name (sticky.note), not the model_ xmlid; "
+        "perm_read/write/create/unlink collapse into one operation string (1,1,1,1 -> "
+        "crud; 1,0,0,0 -> r).",
+    ),
+}
+
+# Loader aliases that never map to an addon file; PATH absence is not a finding.
+# Symbol existence for @odoo/owl IS a finding (js-symbol). Do not skip that check.
+JS_ALIAS_PREFIXES = ("@odoo/",)
+JS_ALIAS_EXACT = {"@web/../tests/web_test_helpers", "@web/../tests/public/helpers"}
+
+# Named imports whose file survived but the export did not (rule 22 OWL / JS).
+# Hints only — the mechanical test is "is this name exported at the target?".
+JS_SYMBOL_HINTS = {
+    ("@odoo/owl", "useState"):
+        "OWL 3 deleted useState. Core FormRenderer: this.state = proxy({}). "
+        "The owl3 compat layer does NOT restore it.",
+    ("@odoo/owl", "reactive"):
+        "OWL 3 deleted reactive. Use proxy() from @odoo/owl.",
+    ("@odoo/owl", "loadFile"):
+        "OWL 3 deleted loadFile.",
+    ("@odoo/owl", "validate"):
+        "OWL 3 deleted validate.",
+    ("@web/core/utils/concurrency", "Deferred"):
+        "gone; use Promise.withResolvers() "
+        "(polyfill in web/static/src/polyfills/promise.js).",
+    ("@web/core/assets", "LazyComponent"):
+        "moved to @web/core/lazy_component.",
+    ("@web/core/emoji_picker/emoji_picker", "loadEmoji"):
+        "use useLoadEmoji() from @web/core/emoji_picker/emoji_loader.",
+    ("@web/core/utils/reactive", "effect"):
+        "gone from this module. OWL 3 effect(fn) is not the two-arg helper.",
+    ("@html_builder/core/utils", "BaseOptionComponent"):
+        "moved to @html_builder/core/base_option_component.",
+}
+
+REMOVED_PYTHON_CALLS = {
+    "get_param":
+        "ir.config_parameter.get_param is gone; use get_str / get_bool / "
+        "get_int / get_float.",
+    "set_param":
+        "ir.config_parameter.set_param is gone; use set_str / set_bool / "
+        "set_int / set_float.",
+}
+
+OWL_DESTRUCTURE_RE = re.compile(
+    r"""(?:const|let|var)\s*\{\s*([^}]+)\}\s*=\s*owl\b"""
+)
+OWL_XPATH_TREF_RE = re.compile(
+    r"""@t-(?:ref|esc|raw|portal|model)\s*=\s*["'][^"']+["']"""
+)
+OWL_OWN_TREF_RE = re.compile(
+    r"""(?<!@)t-(?:ref|model|portal)\s*=\s*["'](?!this\.)[^"']+["']"""
+)
+
+
+def log(msg: str = "") -> None:
+    """Informational output. Goes to stderr so --json keeps stdout machine-readable."""
+    print(msg, file=sys.stderr)
+
+
+class Tree:
+    """Read-only view of one git ref, with cached path/content lookups."""
+
+    def __init__(self, repo: str, ref: str, label: str):
+        self.repo = repo
+        self.ref = ref
+        self.label = label
+        self._paths: set[str] | None = None
+
+    def _git(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", self.repo, *args],
+                              capture_output=True, text=True)
+
+    @property
+    def paths(self) -> set[str]:
+        if self._paths is None:
+            out = self._git("ls-tree", "-r", "--name-only", self.ref)
+            if out.returncode != 0:
+                raise SystemExit(f"{self.label}: cannot read ref {self.ref}: {out.stderr.strip()}")
+            self._paths = set(out.stdout.splitlines())
+        return self._paths
+
+    def exists(self, path: str) -> bool:
+        return path in self.paths
+
+    @lru_cache(maxsize=4096)
+    def show(self, path: str) -> str | None:
+        if not self.exists(path):
+            return None
+        out = self._git("show", f"{self.ref}:{path}")
+        return out.stdout if out.returncode == 0 else None
+
+    def grep(self, pattern: str, *pathspecs: str, raw_paths: bool = False) -> str:
+        flags = ["-oE"] if raw_paths else ["-h", "-oE"]
+        out = self._git("grep", *flags, pattern, self.ref, "--", *pathspecs)
+        return out.stdout
+
+
+class Target:
+    """odoo + enterprise at the target refs, queried as one surface."""
+
+    def __init__(self, odoo: Tree, enterprise: Tree | None):
+        self.trees = [t for t in (odoo, enterprise) if t is not None]
+        self.odoo = odoo
+        self.enterprise = enterprise
+
+    # ---- module layout -------------------------------------------------
+    def addon_roots(self, module: str) -> list[tuple[Tree, str]]:
+        """Where module `module` could live in each target tree."""
+        out: list[tuple[Tree, str]] = []
+        out.append((self.odoo, f"addons/{module}"))
+        out.append((self.odoo, f"odoo/addons/{module}"))  # base only
+        if self.enterprise is not None:
+            out.append((self.enterprise, module))
+        return out
+
+    def any_exists(self, rel_candidates: list[tuple[Tree, str]]) -> bool:
+        return any(tree.exists(path) for tree, path in rel_candidates)
+
+    # ---- model registry ------------------------------------------------
+    # Resolved lazily, one model at a time, via `git grep`. An eager index of every
+    # model in both trees costs thousands of `git show` calls (~25 min for a full run);
+    # a port only ever asks about the few dozen models the repo actually extends.
+    @lru_cache(maxsize=2048)
+    def model_files(self, model: str) -> tuple[tuple[Tree, str], ...]:
+        """Files that declare or extend `model`, across both trees."""
+        found: list[tuple[Tree, str]] = []
+        needle = re.compile(
+            rf"""_(?:name|inherit)\s*=\s*(?:\[[^\]]*['"]{re.escape(model)}['"]|['"]{re.escape(model)}['"])"""
+        )
+        # NOTE: `git grep -E` is POSIX ERE - no `(?:...)`, no `\s`. Using them here silently
+        # matches nothing, which looks exactly like "no findings".
+        posix_model = model.replace(".", "[.]")
+        for tree in self.trees:
+            out = tree.grep(rf"""_(name|inherit)[[:space:]]*=.*['"]{posix_model}['"]""",
+                            "*.py", raw_paths=True)
+            for line in out.splitlines():
+                # format: <ref>:<path>:<match>
+                parts = line.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                path = parts[1]
+                if "/tests/" in path or "/static/" in path:
+                    continue
+                src = tree.show(path)
+                if src and needle.search(src):
+                    found.append((tree, path))
+        return tuple(found)
+
+    @lru_cache(maxsize=1)
+    def framework_methods(self) -> set[str]:
+        """Methods defined on BaseModel and friends, i.e. available on EVERY model.
+
+        Without this the check reports `export_data`, `_check_access`, `copy`, ... as dead,
+        because they live in odoo/orm/models.py rather than an addon's models/ directory.
+        """
+        names: set[str] = set()
+        pat = re.compile(r"^\s*(?:def|async def)\s+([a-zA-Z_][\w]*)\s*\(", re.M)
+        for path in self.odoo.paths:
+            if not path.endswith(".py"):
+                continue
+            if not (path.startswith(("odoo/orm/", "odoo/models/", "odoo/api/", "odoo/fields/"))
+                    or re.fullmatch(r"odoo/[a-z_]+\.py", path)):
+                continue
+            src = self.odoo.show(path)
+            if src:
+                names.update(pat.findall(src))
+        return names
+
+    def model_defines(self, model: str, method: str) -> bool:
+        """Does any file touching `model` define `method`?
+
+        Scoped to the model's own files, which is the whole point: a global name search
+        both hides dead hooks and invents false ones.
+        """
+        if method in self.framework_methods():
+            return True
+        files = self.model_files(model)
+        if not files:
+            return False
+        needle = re.compile(rf"^\s*(?:def|async def)\s+{re.escape(method)}\s*\(", re.M)
+        attr = re.compile(rf"^\s*{re.escape(method)}\s*=", re.M)
+        for tree, path in files:
+            src = tree.show(path)
+            if src and (needle.search(src) or attr.search(src)):
+                return True
+        return False
+
+    def model_known(self, model: str) -> bool:
+        return bool(self.model_files(model))
+
+    # ---- js module resolution -------------------------------------------
+    def js_candidates(self, spec: str) -> list[tuple[Tree, str]]:
+        mod, _, rest = spec.lstrip("@").partition("/")
+        if not rest:
+            return []
+        cands: list[tuple[Tree, str]] = []
+        for tree, root in self.addon_roots(mod):
+            base = f"{root}/static/src/{rest}"
+            cands += [(tree, base + ".js"), (tree, base + "/index.js"), (tree, base + ".xml")]
+        return cands
+
+    def resolve_js(self, spec: str) -> bool:
+        if spec in JS_ALIAS_EXACT or spec.startswith(JS_ALIAS_PREFIXES):
+            return True
+        cands = self.js_candidates(spec)
+        return True if not cands else self.any_exists(cands)
+
+    @lru_cache(maxsize=1)
+    def owl_exports(self) -> frozenset[str]:
+        """Public names on `@odoo/owl` at this target: owl.d.ts plus compat assignments.
+
+        `@odoo/owl` is a loader alias, so resolve_js is always True. The 19 -> 20 break is
+        a deleted *export* (useState). Compat restores useRef / useLayoutEffect / … and
+        does not restore useState or reactive.
+        """
+        names: set[str] = set()
+        dts = self.odoo.show("addons/web/static/lib/owl/owl.d.ts") or ""
+        names.update(re.findall(
+            r"^export (?:declare )?(?:function|class|const|type|enum|interface)\s+"
+            r"([A-Za-z_][\w]*)",
+            dts, re.M,
+        ))
+        for grp in re.findall(r"^export \{([^}]+)\}", dts, re.M):
+            names.update(re.findall(r"([A-Za-z_][\w]*)", grp))
+        compat = self.odoo.show(
+            "addons/web/static/src/owl2/owl3_compatibility_layer.js"
+        ) or ""
+        names.update(re.findall(r"owl\.([A-Za-z_][\w]*)\s*=", compat))
+        return frozenset(names)
+
+    def js_exported_names(self, spec: str) -> set[str] | None:
+        """Export names of the file `spec` resolves to, or None if the path is gone.
+
+        One-level relative `export { … } from` / `export * from` are followed so a
+        barrel file is not reported as missing everything it re-exports. `@odoo/owl`
+        is handled by owl_exports, not here.
+        """
+        if spec == "@odoo/owl" or spec.startswith("@odoo/owl"):
+            return set(self.owl_exports())
+        src = self.js_source(spec)
+        if src is None:
+            return None
+        return _js_parse_exports(src, spec, self)
+
+    def js_source(self, spec: str) -> str | None:
+        for tree, path in self.js_candidates(spec):
+            if path.endswith(".js") and tree.exists(path):
+                return tree.show(path)
+        return None
+
+    @lru_cache(maxsize=512)
+    def js_class_fields(self, spec: str, symbol: str) -> frozenset[str]:
+        """Members declared as CLASS FIELDS by class `symbol` of module `spec`, and its ancestors.
+
+        A class field is an *own property* of every instance, so `patch(X.prototype, ...)` can
+        never override it - the patch is silently dead (rule 22, `MessageModel.isEmpty`).
+
+        Bound to the *patched class*, never to the file: a module may export several classes, and
+        a field of a class nobody patched says nothing about the one that was. Ancestors are
+        followed through `extends` (local or imported) because the member may live on a parent or
+        mixin rather than the class the module imported. Returns an empty set - never a guess -
+        when the class cannot be located.
+        """
+        names: set[str] = set()
+        seen: set[tuple[str, str]] = set()
+        pending = [(spec, symbol)]
+        while pending:
+            cur_spec, cur_symbol = pending.pop()
+            if (cur_spec, cur_symbol) in seen:
+                continue
+            seen.add((cur_spec, cur_symbol))
+            src = self.js_source(cur_spec)
+            if not src:
+                continue
+            body, parent = js_class_body(js_blank_literals(src), cur_symbol)
+            if body is None:
+                continue
+            names.update(js_own_field_names(body))
+            if parent:
+                imports = js_import_bindings(src)
+                # An imported parent moves to its own module; a local one stays in this file.
+                pending.append((imports.get(parent, cur_spec), parent))
+        return frozenset(names)
+
+    # ---- view xmlids -----------------------------------------------------
+    @lru_cache(maxsize=1)
+    def _xml_index(self) -> tuple[set[str], set[str]]:
+        """(record xmlids, every `name="..."` value) over all target XML.
+
+        One pass for both: `tree.show` is cached, but the walk itself is the expensive
+        part, so the node-name set rides along instead of grepping per anchor.
+        """
+        ids: set[str] = set()
+        node_names: set[str] = set()
+        rec = re.compile(r'<record[^>]*\bid="([a-zA-Z0-9_.]+)"')
+        name = re.compile(r'\bname="([^"]+)"')
+        for tree in self.trees:
+            for path in tree.paths:
+                if not path.endswith(".xml") or "/static/" in path or "/i18n/" in path:
+                    continue
+                parts = path.split("/")
+                if path.startswith("addons/"):
+                    module = parts[1]
+                elif path.startswith("odoo/addons/"):
+                    module = parts[2]
+                else:
+                    module = parts[0]
+                src = tree.show(path)
+                if not src:
+                    continue
+                for xid in rec.findall(src):
+                    ids.add(xid if "." in xid else f"{module}.{xid}")
+                node_names.update(name.findall(src))
+        return ids, node_names
+
+    def view_xmlids(self) -> set[str]:
+        return self._xml_index()[0]
+
+    def view_node_names(self) -> set[str]:
+        return self._xml_index()[1]
+
+
+# ------------------------------------------------------------------ repo side
+
+class Finding:
+    def __init__(self, kind: str, module: str, path: str, line: int, detail: str):
+        self.kind, self.module, self.path, self.line, self.detail = kind, module, path, line, detail
+
+    def as_dict(self) -> dict:
+        return {"kind": self.kind, "module": self.module, "path": self.path,
+                "line": self.line, "detail": self.detail}
+
+
+def discover_modules(repo: str, wanted: list[str] | None) -> list[str]:
+    mods = sorted(d for d in os.listdir(repo)
+                  if os.path.isfile(os.path.join(repo, d, "__manifest__.py")))
+    if wanted:
+        missing = [m for m in wanted if m not in mods]
+        if missing:
+            raise SystemExit(f"not addons of {repo}: {', '.join(missing)}")
+        return [m for m in mods if m in wanted]
+    return mods
+
+
+def walk(repo: str, module: str, *suffixes: str):
+    root = os.path.join(repo, module)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in {".git", "__pycache__", "i18n"}]
+        for name in filenames:
+            if suffixes and not name.endswith(suffixes):
+                continue
+            full = os.path.join(dirpath, name)
+            yield full, os.path.relpath(full, repo)
+
+
+def read(path: str) -> str:
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+class RepoModels:
+    """Inheritance graph and method index for the repo under test.
+
+    Needed for two false-positive classes that a naive scan gets wrong:
+
+    * The MRO often reaches core *through one of our own models*
+      (`business.appointment` -> `business.appointment.core` -> `mail.thread`).
+      Only direct parents would miss `mail.thread` and report live hooks as dead.
+    * Another class may define the method on the same model - in a sibling
+      module or in this one - so the super() chain resolves inside the repo.
+      Limitation: if two of our classes both override the same *removed* core
+      hook on the same model, this hides it. That only affects the
+      `stale-override` class; a real 19 -> 20 removal is classified from the
+      base ref before this suppression runs.
+    """
+
+    def __init__(self, repo: str, modules: list[str]):
+        self.parents: dict[str, set[str]] = defaultdict(set)
+        # model -> {(method, module, relative path, line)}
+        self.methods: dict[str, set[tuple[str, str, str, int]]] = defaultdict(set)
+        self.owned: set[str] = set()
+        for module in modules:
+            for full, rel in walk(repo, module, ".py"):
+                if "/tests/" in rel.replace(os.sep, "/"):
+                    continue
+                try:
+                    tree = ast.parse(read(full))
+                except SyntaxError:
+                    continue
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.ClassDef):
+                        continue
+                    name, inherits = class_models(node)
+                    model = name or (inherits[0] if inherits else None)
+                    if not model:
+                        continue
+                    if name:
+                        self.owned.add(name)
+                    for parent in inherits:
+                        if parent != model:
+                            self.parents[model].add(parent)
+                    for stmt in node.body:
+                        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            self.methods[model].add((stmt.name, module, rel, stmt.lineno))
+
+    def ancestors(self, model: str) -> set[str]:
+        """Transitive parents, expanding through repo-owned models."""
+        seen: set[str] = set()
+        stack = list(self.parents.get(model, ()))
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(self.parents.get(cur, ()))
+        return seen
+
+    def defined_elsewhere(self, models: set[str], method: str,
+                          path: str, line: int) -> str | None:
+        """Another definition of `method` on one of `models`, outside the site being judged.
+
+        Compared by (path, line) rather than by module: an internal chain inside one module is
+        just as real as a cross-module one, and comparing modules made the check report the
+        second class of the same model as a stale override.
+        """
+        for model in models:
+            for name, owner, opath, oline in self.methods.get(model, ()):
+                if name == method and (opath, oline) != (path, line):
+                    return f"{owner} ({opath}:{oline})"
+        return None
+
+
+def class_models(node: ast.ClassDef) -> tuple[str | None, list[str]]:
+    """(_name, _inherit list) declared on an Odoo model class."""
+    own = None
+    inherits: list[str] = []
+    for stmt in node.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        names = {t.id for t in stmt.targets if isinstance(t, ast.Name)}
+        if not names & {"_inherit", "_name"}:
+            continue
+        try:
+            val = ast.literal_eval(stmt.value)
+        except Exception:
+            continue
+        vals = [val] if isinstance(val, str) else list(val) if isinstance(val, (list, tuple)) else []
+        vals = [v for v in vals if isinstance(v, str)]
+        if "_name" in names and vals:
+            own = vals[0]
+        if "_inherit" in names:
+            inherits += vals
+    return own, inherits
+
+
+def check_dead_hooks(repo: str, module: str, target: Target, repo_models: RepoModels,
+                     base: Target | None = None) -> list[Finding]:
+    """Overrides of core hooks, classified by comparing the base and target refs.
+
+    exists at base, gone at target -> dead-hook     (the 19 -> 20 break we care about)
+    gone at both                   -> stale-override (pre-existing; not caused by this port)
+    exists at target               -> live; not reported
+
+    Comparing both refs is what makes this trustworthy. A target-only check cannot tell a
+    fresh removal from an override that was already dead on 19.0, and it is exactly why the
+    earlier sibling-module heuristic had to go: that heuristic hid real removals whenever two
+    of our modules overrode the same core hook.
+    """
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".py"):
+        if "/tests/" in rel.replace(os.sep, "/"):
+            continue
+        try:
+            tree = ast.parse(read(full))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            own_name, inherits = class_models(node)
+            model = own_name or (inherits[0] if inherits else None)
+            if not model:
+                continue
+            # Full ancestor set, expanded through our own models, then keep the core ones.
+            chain = set(inherits) | repo_models.ancestors(model)
+            if own_name and own_name not in inherits:
+                # `_name` alone means the model starts here, so it is not its own parent. But
+                # `_name = X` together with `_inherit = [X, ...]` is the extend-in-place style
+                # (odoo_email_from's mail.compose.message), where X *is* the core parent -
+                # dropping it left the class with no core chain at all.
+                chain.discard(own_name)
+            core_chain = {m for m in chain if target.model_known(m)}
+            if not core_chain:
+                # Every Odoo model still inherits BaseModel, so an override can be dead even
+                # when the class names no core parent. `portal.password.key` (_inherit = one of
+                # our own mixins) hid a dead `_generate_order_by` from this check exactly that
+                # way; only a direct grep found it. `base` resolves through framework_methods().
+                core_chain = {"base"}
+            for stmt in node.body:
+                if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if not calls_super(stmt):
+                    continue
+                if any(target.model_defines(m, stmt.name) for m in core_chain):
+                    continue
+                models_txt = ", ".join(sorted(core_chain))
+                existed_at_base = base is not None and any(
+                    base.model_defines(m, stmt.name) for m in core_chain
+                )
+                if base is None:
+                    kind, detail = "dead-hook", (
+                        f"{stmt.name}() overrides nothing on {models_txt} at the target ref "
+                        f"- pass --odoo-base-ref to tell a fresh removal from a stale override")
+                elif existed_at_base:
+                    kind, detail = "dead-hook", (
+                        f"{stmt.name}() existed on {models_txt} at the base ref and is gone at the "
+                        f"target ref - the override will never be called, silently")
+                else:
+                    sibling = repo_models.defined_elsewhere(
+                        chain | {model}, stmt.name, rel, stmt.lineno)
+                    if sibling:
+                        continue  # our own super() chain, never an upstream hook
+                    kind, detail = "stale-override", (
+                        f"{stmt.name}() is absent from {models_txt} at BOTH refs - already dead "
+                        f"before this port, not caused by it")
+                out.append(Finding(kind, module, rel, stmt.lineno, detail))
+    return out
+
+
+def calls_super(fn: ast.AST) -> bool:
+    for n in ast.walk(fn):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if isinstance(f, ast.Name) and f.id == "super":
+            return True
+        if (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call)
+                and isinstance(f.value.func, ast.Name) and f.value.func.id == "super"):
+            return True
+    return False
+
+
+JS_IMPORT_RE = re.compile(r"""(?:from|import)\s+["'](@[a-z_0-9]+/[^"']+)["']""")
+JS_PATCH_RE = re.compile(r"\bpatch\s*\(\s*([A-Za-z_$][\w$]*)")
+JS_PROTO_PATCH_RE = re.compile(r"\bpatch\s*\(\s*([A-Za-z_$][\w$]*)\.prototype\s*,")
+JS_IMPORT_STMT_RE = re.compile(
+    r"""import\s+(?:\{(?P<named>[^}]*)\}|(?P<default>[A-Za-z_$][\w$]*))\s*from\s*["'](?P<spec>[^"']+)["']"""
+)
+
+
+def _join_js_spec(spec: str, rel: str) -> str:
+    """Resolve `./x` / `../x` against an `@mod/path` spec (no .js suffix)."""
+    if rel.startswith("@"):
+        return rel.split(".", 1)[0] if not rel.endswith(".js") else rel[:-3]
+    rel = rel[:-3] if rel.endswith(".js") else rel
+    directory = spec.rsplit("/", 1)[0]
+    bits: list[str] = []
+    for part in (directory + "/" + rel).split("/"):
+        if part in (".", ""):
+            continue
+        if part == "..":
+            if bits:
+                bits.pop()
+            continue
+        bits.append(part)
+    return "/".join(bits)
+
+
+def _js_parse_exports(src: str, spec: str, target: "Target") -> set[str]:
+    """Export names visible from `src`, following one level of relative re-export."""
+    names: set[str] = set()
+    reexports: list[str] = []
+    for m in re.finditer(
+        r"^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)",
+        src, re.M,
+    ):
+        names.add(m.group(1))
+    if re.search(r"^export\s+default\b", src, re.M):
+        names.add("default")
+    for m in re.finditer(
+        r"^export\s+\{([^}]+)\}(?:\s*from\s*['\"]([^'\"]+)['\"])?",
+        src, re.M,
+    ):
+        for part in m.group(1).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            bits = re.findall(r"[A-Za-z_$][\w$]*", part)
+            if not bits:
+                continue
+            names.add(bits[-1] if " as " in part else bits[0])
+        if m.group(2):
+            reexports.append(m.group(2))
+    for m in re.finditer(r"^export\s+\*\s+from\s*['\"]([^'\"]+)['\"]", src, re.M):
+        reexports.append(m.group(1))
+    for rel in reexports:
+        if not rel.startswith("."):
+            continue
+        child = target.js_source(_join_js_spec(spec, rel))
+        if not child:
+            continue
+        for m in re.finditer(
+            r"^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)",
+            child, re.M,
+        ):
+            names.add(m.group(1))
+        if re.search(r"^export\s+default\b", child, re.M):
+            names.add("default")
+        for m in re.finditer(r"^export\s+\{([^}]+)\}", child, re.M):
+            for part in m.group(1).split(","):
+                bits = re.findall(r"[A-Za-z_$][\w$]*", part)
+                if bits:
+                    names.add(bits[-1] if " as " in part else bits[0])
+    return names
+
+
+def _useeffect_twoarg_lines(src: str) -> list[int]:
+    """Line numbers of `useEffect(` calls that pass a second argument."""
+    out: list[int] = []
+    for m in re.finditer(r"\buseEffect\s*\(", src):
+        i = m.end() - 1
+        depth = 0
+        args = 0
+        saw_token = False
+        for j in range(i, len(src)):
+            ch = src[j]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    if saw_token:
+                        args += 1
+                    break
+            elif ch == "," and depth == 1:
+                args += 1
+                saw_token = False
+            elif not ch.isspace() and depth == 1:
+                saw_token = True
+        if args >= 2:
+            out.append(src.count("\n", 0, m.start()) + 1)
+    return out
+# A member of a `patch(X.prototype, {...})` body: `get foo()`, `async foo()`, `foo()`, `foo:`.
+# Indentation is not part of the pattern - members are located by brace depth instead, because
+# an assumed indent width silently matches nothing in a differently formatted file.
+JS_PATCH_MEMBER_RE = re.compile(
+    r"^\s*(?:(?P<kind>get|set)\s+)?(?:async\s+)?(?P<name>[A-Za-z_$][\w$]*)\s*(?:\(|:)"
+)
+JS_NEST_OPEN = "{(["
+JS_NEST_CLOSE = "})]"
+
+
+def js_import_targets(src: str) -> dict[str, tuple[str, str]]:
+    """Local name -> (module spec, name that module exports), honouring `as` aliases.
+
+    The exported name is what matters for `patch(MessageModel.prototype, ...)`: upstream declares
+    the class as `Message`, so looking for `class MessageModel` in the target file finds nothing.
+    """
+    out: dict[str, tuple[str, str]] = {}
+    for m in JS_IMPORT_STMT_RE.finditer(src):
+        spec = m.group("spec")
+        if default := m.group("default"):
+            out[default] = (spec, "default")
+        for part in (m.group("named") or "").split(","):
+            part = part.strip()
+            if not part:
+                continue
+            original, _, alias = (p.strip() for p in part.partition(" as "))
+            if original:
+                out[alias or original] = (spec, original)
+    return out
+
+
+def js_import_bindings(src: str) -> dict[str, str]:
+    """Local name -> module spec (drops the exported name; see js_import_targets)."""
+    return {local: spec for local, (spec, _) in js_import_targets(src).items()}
+
+
+def js_blank_literals(src: str) -> str:
+    """Same text, with comment and string/template contents replaced by spaces.
+
+    Brace counting on raw JS is not safe: a brace inside a string, a regex-ish comment or a
+    template literal ends a class body early or never. Length and newlines are preserved so
+    offsets and line numbers still line up with the original.
+    """
+    out = list(src)
+    i, n = 0, len(src)
+    mode: str | None = None
+    while i < n:
+        ch = src[i]
+        following = src[i + 1] if i + 1 < n else ""
+        if mode is None:
+            if ch == "/" and following == "/":
+                mode, out[i], out[i + 1] = "line", " ", " "
+                i += 2
+            elif ch == "/" and following == "*":
+                mode, out[i], out[i + 1] = "block", " ", " "
+                i += 2
+            elif ch in "\"'`":
+                mode = ch          # keep the quote, blank what is inside
+                i += 1
+            else:
+                i += 1
+        elif mode == "line":
+            if ch == "\n":
+                mode = None
+            else:
+                out[i] = " "
+            i += 1
+        elif mode == "block":
+            if ch == "*" and following == "/":
+                mode, out[i], out[i + 1] = None, " ", " "
+                i += 2
+            else:
+                if ch != "\n":
+                    out[i] = " "
+                i += 1
+        else:                      # inside a string or template literal
+            if ch == "\\":
+                out[i] = " "
+                if following and following != "\n":
+                    out[i + 1] = " "
+                i += 2
+            elif ch == mode:
+                mode = None
+                i += 1
+            else:
+                if ch != "\n":
+                    out[i] = " "
+                i += 1
+    return "".join(out)
+
+
+def js_block_at(blanked: str, brace_pos: int) -> str | None:
+    """Text between `brace_pos` (an opening brace) and its match, or None if unbalanced."""
+    depth = 0
+    for idx in range(brace_pos, len(blanked)):
+        if blanked[idx] == "{":
+            depth += 1
+        elif blanked[idx] == "}":
+            depth -= 1
+            if depth == 0:
+                return blanked[brace_pos + 1:idx]
+    return None
+
+
+def js_class_body(blanked: str, symbol: str) -> tuple[str | None, str | None]:
+    """(body, parent class name) for class `symbol`, or (None, None) when it is not found."""
+    if symbol == "default":
+        header = re.search(r"\bexport\s+default\s+class\b([^{]*)\{", blanked)
+    else:
+        header = re.search(rf"\bclass\s+{re.escape(symbol)}\b([^{{]*)\{{", blanked)
+    if not header:
+        return None, None
+    parent = None
+    if m := re.search(r"\bextends\s+([A-Za-z_$][\w$]*)", header.group(1)):
+        parent = m.group(1)
+    return js_block_at(blanked, header.end() - 1), parent
+
+
+def js_own_field_names(body: str) -> set[str]:
+    """Instance class fields declared directly in `body` (`name = ...`).
+
+    `static` fields are excluded: they live on the constructor, so they shadow nothing for
+    instances. Depth counts every bracket kind, so a field spanning several lines - such as
+    `isEmpty = fields.Attr(false, {compute() {...}})` - does not expose its inner lines.
+    """
+    names: set[str] = set()
+    depth = 0
+    for line in body.splitlines():
+        if depth == 0 and not re.match(r"\s*static\b", line):
+            if m := re.match(r"\s*(?:#)?([A-Za-z_$][\w$]*)\s*=\s*(?!=)", line):
+                names.add(m.group(1))
+        depth = max(0, depth + sum(ch in JS_NEST_OPEN for ch in line)
+                    - sum(ch in JS_NEST_CLOSE for ch in line))
+    return names
+
+
+def check_js(repo: str, module: str, target: Target, own_modules: set[str]) -> list[Finding]:
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".js"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/tests/" in rel_posix:
+            continue
+        src = read(full)
+        imports: dict[str, str] = {}
+        for lineno, line in enumerate(src.splitlines(), 1):
+            for spec in JS_IMPORT_RE.findall(line):
+                owner = spec.lstrip("@").split("/")[0]
+                for name in re.findall(r"[{,]?\s*([A-Za-z_$][\w$]*)", line.split("from")[0]):
+                    imports.setdefault(name, spec)
+                if owner in own_modules:
+                    continue
+                if not target.resolve_js(spec):
+                    out.append(Finding("js-import", module, rel, lineno,
+                                       f"{spec} resolves to no file in odoo or enterprise"))
+        # patch() targets whose import is already broken are reported once more,
+        # because the failure mode (asset load error) differs from a stale symbol.
+        for lineno, line in enumerate(src.splitlines(), 1):
+            for sym in JS_PATCH_RE.findall(line):
+                spec = imports.get(sym) or imports.get(sym.split(".")[0])
+                if not spec:
+                    continue
+                owner = spec.lstrip("@").split("/")[0]
+                if owner in own_modules or target.resolve_js(spec):
+                    continue
+                out.append(Finding("patch-target", module, rel, lineno,
+                                   f"patch({sym}) targets {spec}, which no longer resolves"))
+        out += check_patch_shadow(module, rel, src, target, own_modules)
+        out += check_js_symbols(module, rel, src, target, own_modules)
+    return out
+
+
+def _named_from_clause(clause: str) -> list[str]:
+    names: list[str] = []
+    for part in clause.split(","):
+        part = part.strip()
+        if not part or part == "type":
+            continue
+        original = part.split(" as ")[0].strip()
+        if original:
+            names.append(original)
+    return names
+
+
+def check_js_symbols(module: str, rel: str, src: str, target: Target,
+                     own_modules: set[str]) -> list[Finding]:
+    """Named imports / owl destructures whose export is gone at the target."""
+    out: list[Finding] = []
+    imported_useeffect_from_owl = False
+    for m in JS_IMPORT_STMT_RE.finditer(src):
+        spec = m.group("spec")
+        if not spec or not spec.startswith("@"):
+            continue
+        owner = spec.lstrip("@").split("/")[0]
+        if owner in own_modules:
+            continue
+        names = _named_from_clause(m.group("named") or "")
+        if spec == "@odoo/owl" and "useEffect" in names:
+            imported_useeffect_from_owl = True
+        if spec in JS_ALIAS_EXACT:
+            continue
+        # Path gone is js-import, already reported. Only check symbols on a live file
+        # or on the owl alias.
+        is_owl = spec == "@odoo/owl" or spec.startswith("@odoo/owl")
+        if not is_owl and not target.resolve_js(spec):
+            continue
+        exported = target.js_exported_names(spec)
+        if exported is None:
+            continue
+        lineno = src.count("\n", 0, m.start()) + 1
+        for name in names:
+            if name in exported:
+                continue
+            hint = JS_SYMBOL_HINTS.get((spec, name), "")
+            detail = f"{name} is not exported from {spec} at the target"
+            if hint:
+                detail = f"{name} from {spec}: {hint}"
+            out.append(Finding("js-symbol", module, rel, lineno, detail))
+    for m in OWL_DESTRUCTURE_RE.finditer(src):
+        names = _named_from_clause(m.group(1))
+        if "useEffect" in names:
+            imported_useeffect_from_owl = True
+        exported = target.owl_exports()
+        lineno = src.count("\n", 0, m.start()) + 1
+        for name in names:
+            if name in exported:
+                continue
+            hint = JS_SYMBOL_HINTS.get(("@odoo/owl", name), "")
+            detail = f"{name} is not on owl at the target (`const {{ {name} }} = owl`)"
+            if hint:
+                detail = f"{name} from owl: {hint}"
+            out.append(Finding("js-symbol", module, rel, lineno, detail))
+    if imported_useeffect_from_owl:
+        for lineno in _useeffect_twoarg_lines(src):
+            out.append(Finding(
+                "owl-hook", module, rel, lineno,
+                "useEffect(fn, deps) from @odoo/owl: OWL 3 useEffect is "
+                "useEffect(fn) and ignores the deps array. Use useLayoutEffect "
+                "from @web/owl2/utils (compat OWL-2 semantics).",
+            ))
+    return out
+
+
+def check_owl_templates(repo: str, module: str) -> list[Finding]:
+    """OWL t-inherit XPath on @t-ref, and OWL-2 named t-ref in our own templates."""
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/src/" not in rel_posix:
+            continue
+        src = read(full)
+        for lineno, line in enumerate(src.splitlines(), 1):
+            if OWL_XPATH_TREF_RE.search(line):
+                out.append(Finding(
+                    "owl-xpath", module, rel, lineno,
+                    "t-inherit XPath selects @t-ref / @t-esc on a core template. "
+                    "saas-19.4 rewrote those to t-custom-ref or t-ref=\"this.x\" "
+                    "(web.KanbanRecord article, mail.Message shadowBody). "
+                    "Retarget the XPath.",
+                ))
+            elif OWL_OWN_TREF_RE.search(line) and "xpath" not in line:
+                out.append(Finding(
+                    "owl-tref", module, rel, lineno,
+                    "OWL-2 named t-ref / t-model / t-portal. Compat header: "
+                    "t-custom-ref / t-custom-model / t-custom-portal. "
+                    "Leftover core t-ref is t-ref=\"this.fooRef\" (OWL 3 signal).",
+                ))
+    return out
+
+
+def check_python_api(repo: str, module: str) -> list[Finding]:
+    out: list[Finding] = []
+    pats = {name: re.compile(rf"\.{re.escape(name)}\s*\(") for name in REMOVED_PYTHON_CALLS}
+    for full, rel in walk(repo, module, ".py"):
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            stripped = line.lstrip()
+            if stripped.startswith("#"):
+                continue
+            for name, why in REMOVED_PYTHON_CALLS.items():
+                if pats[name].search(line):
+                    out.append(Finding("python-api", module, rel, lineno,
+                                       f"{name}(): {why}"))
+    return out
+
+
+def check_patch_shadow(module: str, rel: str, src: str, target: Target,
+                       own_modules: set[str]) -> list[Finding]:
+    """Prototype patches of members upstream declares as class fields.
+
+    Such a member is an own property of every instance, so the prototype entry is shadowed and
+    never runs - no error, no warning, on any serie (rule 22, `MessageModel.isEmpty`).
+    """
+    out: list[Finding] = []
+    targets = js_import_targets(src)
+    blanked = js_blank_literals(src)
+    for m in JS_PROTO_PATCH_RE.finditer(blanked):
+        sym = m.group(1)
+        spec, exported = targets.get(sym, (None, None))
+        if not spec or spec.lstrip("@").split("/")[0] in own_modules:
+            continue
+        fields_ = target.js_class_fields(spec, exported)
+        if not fields_:
+            continue
+        brace = blanked.find("{", m.end() - 1)
+        body = js_block_at(blanked, brace) if brace != -1 else None
+        if body is None:
+            continue
+        first_body_line = blanked.count("\n", 0, brace + 1) + 1
+        depth = 0
+        for offset, body_line in enumerate(body.splitlines()):
+            if depth == 0 and (mm := JS_PATCH_MEMBER_RE.match(body_line)):
+                if mm.group("name") in fields_:
+                    kind = mm.group("kind")
+                    shape = f"{kind} " if kind else ""
+                    out.append(Finding(
+                        "patch-shadow", module, rel, first_body_line + offset,
+                        f"{shape}{mm.group('name')} is a class field on {exported} "
+                        f"({spec}) - an own instance property shadows this prototype entry, "
+                        f"so it never runs"))
+            depth = max(0, depth + sum(ch in JS_NEST_OPEN for ch in body_line)
+                        - sum(ch in JS_NEST_CLOSE for ch in body_line))
+    return out
+
+
+INHERIT_REF_RE = re.compile(r'name="inherit_id"\s+ref="([\w.]+)"')
+
+
+def check_views(repo: str, module: str, target: Target, own_modules: set[str]) -> list[Finding]:
+    out: list[Finding] = []
+    known = target.view_xmlids()
+    for full, rel in walk(repo, module, ".xml"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/" in rel_posix:
+            continue
+        src = read(full)
+        for lineno, line in enumerate(src.splitlines(), 1):
+            for xid in INHERIT_REF_RE.findall(line):
+                if "." not in xid:
+                    continue
+                if xid.split(".")[0] in own_modules:
+                    continue
+                if xid not in known:
+                    out.append(Finding("view-xmlid", module, rel, lineno,
+                                       f"inherit_id ref {xid} does not exist at the target ref"))
+    return out
+
+
+RECORD_BLOCK_RE = re.compile(r"<record\b.*?</record>", re.S)
+XPATH_EXPR_RE = re.compile(r'expr="([^"]*)"')
+EXPR_NAME_RE = re.compile(r"""@name\s*=\s*['"]([^'"]+)['"]""")
+OPEN_TAG_RE = re.compile(r"<([a-zA-Z_][\w.-]*)\b([^>]*)>", re.S)
+NAME_ATTR_RE = re.compile(r'\bname="([^"]+)"')
+
+
+def _view_anchors(block: str):
+    """(offset, name) for every node this inherit block *targets*.
+
+    Two forms, both unambiguous: a `@name=` predicate inside an `xpath` `expr`, and a tag
+    carrying `position=` (its `name` is the anchor). Nodes we merely *add* have no
+    `position`, so they are not anchors - and `position="attributes"` children
+    (`<attribute name="invisible">`) are not either.
+    """
+    for m in XPATH_EXPR_RE.finditer(block):
+        for anchor in EXPR_NAME_RE.findall(m.group(1)):
+            yield m.start(), anchor
+    for m in OPEN_TAG_RE.finditer(block):
+        attrs = m.group(2)
+        if "position=" not in attrs:
+            continue
+        named = NAME_ATTR_RE.search(attrs)
+        if named:
+            yield m.start(), named.group(1)
+
+
+def check_view_anchors(repo: str, module: str, target: Target,
+                      own_modules: set[str]) -> list[Finding]:
+    """Inherit anchors that exist in no view at the target ref.
+
+    A **signal, not proof**, in both directions. The name is looked up across all target
+    XML, so an anchor that merely moved to another model's view is a miss; and a name
+    present only in a Python-built arch would be a false positive. What it does catch is
+    the class that bit `complementary_lead_data`: `crm`'s `group name="lead_priority"`
+    vanished when saas-19.4 merged the lead and opportunity sidebars, and no other check
+    sees it (the view still exists, so `view-xmlid` is clean, and nothing raises until
+    install).
+    """
+    known = target.view_node_names()
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/" in rel_posix:
+            continue
+        src = read(full)
+        for block in RECORD_BLOCK_RE.finditer(src):
+            refs = INHERIT_REF_RE.findall(block.group(0))
+            foreign = [r for r in refs if "." in r and r.split(".")[0] not in own_modules]
+            if not foreign:
+                continue
+            for off, anchor in _view_anchors(block.group(0)):
+                if anchor in known:
+                    continue
+                lineno = src.count("\n", 0, block.start() + off) + 1
+                out.append(Finding(
+                    "view-anchor", module, rel, lineno,
+                    f"anchor name={anchor!r} exists in no view at the target ref "
+                    f"(inherits {', '.join(foreign)}). Read the target arch: the node was "
+                    f"renamed, merged away, or moved.",
+                ))
+    return out
+
+
+def check_security_models(repo: str, module: str, target: Target) -> list[Finding]:
+    """Data files declaring a security model that no longer exists (rule 22).
+
+    Loud, not silent - the install dies with `KeyError: 'ir.rule'` - but it dies on the
+    first file, so a matrix run reports one module at a time. This lists every site up
+    front. Gated on the target actually having dropped the model.
+    """
+    gone = {old: new for old, (new, _why) in RENAMED_SECURITY_MODELS.items()
+            if not target.model_known(old) and target.model_known(new)}
+    if not gone:
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml", ".csv"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/" in rel_posix:
+            continue
+        stem = os.path.basename(rel_posix)[: -len(".csv")]
+        if rel_posix.endswith(".csv"):
+            if stem in gone:
+                new, why = RENAMED_SECURITY_MODELS[stem]
+                out.append(Finding("security-model", module, rel, 1,
+                                   f"{stem} does not exist at the target ref (now {new}): {why}"))
+            continue
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            for old in gone:
+                if re.search(rf"""model=["']{re.escape(old)}["']""", line):
+                    new, why = RENAMED_SECURITY_MODELS[old]
+                    out.append(Finding("security-model", module, rel, lineno,
+                                       f"{old} does not exist at the target ref (now {new}): {why}"))
+    return out
+
+
+def _manifest_version(src: str) -> tuple[str | None, int]:
+    """(`version` string, lineno) from a module `__manifest__.py`.
+
+    Walks the module-level dict. `ast.literal_eval` cannot see comments, which
+    the port exception writes next to the version.
+    """
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None, 1
+    for stmt in tree.body:
+        node = stmt.value if isinstance(stmt, ast.Expr) else None
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, val in zip(node.keys, node.values):
+            if isinstance(key, ast.Constant) and key.value == "version":
+                if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                    return val.value, val.lineno
+        break
+    return None, 1
+
+
+def check_manifest_version(repo: str, module: str, target: Target) -> list[Finding]:
+    """Serie-prefixed versions are uninstallable on a saas stand-in (rule 22).
+
+    `check_version` compares to `release.major_version`. On saas-19.4 that is
+    `saas~19.4`, so both `19.0.x` and `20.0.x` become installable=False. Only
+    runs when `--odoo-ref` names a saas branch: on real 20.0 the prefix comes
+    back at Fx.
+    """
+    if "saas-" not in target.odoo.ref:
+        return []
+    rel = os.path.join(module, "__manifest__.py")
+    src = read(os.path.join(repo, rel))
+    version, lineno = _manifest_version(src)
+    if not version:
+        return []
+    parts = version.split(".")
+    if len(parts) >= 4 and parts[0].isdigit() and parts[1] == "0":
+        return [Finding(
+            "manifest-version", module, rel, lineno,
+            f"{version!r} is serie-prefixed; on a saas stand-in check_version "
+            f"sets installable=False. Drop the prefix (→ {'.'.join(parts[2:])}), "
+            f"re-prefix at Fx / phase 8.",
+        )]
+    return []
+
+
+def check_field_literals(repo: str, module: str) -> list[Finding]:
+    out: list[Finding] = []
+    pats = {name: re.compile(rf"""["']{re.escape(name)}["']""") for name in REMOVED_FIELD_LITERALS}
+    attr = {name: re.compile(rf"\.{re.escape(name)}\b(?!_)") for name in REMOVED_FIELD_LITERALS}
+    for full, rel in walk(repo, module, ".py", ".xml"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/tests/" in rel_posix:
+            continue
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            for name, why in REMOVED_FIELD_LITERALS.items():
+                if pats[name].search(line) or attr[name].search(line):
+                    out.append(Finding("field-lit", module, rel, lineno,
+                                       f"{name!r}: {why}"))
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Odoo 19 -> 20 mechanical port checks (rule 22)")
+    ap.add_argument("--repo", required=True, help="addons repo being ported (tools, system, ...)")
+    ap.add_argument("--odoo", required=True)
+    ap.add_argument("--odoo-ref", default="origin/saas-19.4")
+    ap.add_argument("--odoo-base-ref", default="origin/19.0",
+                    help="serie being ported FROM; lets the hook check tell a fresh removal "
+                         "from an override that was already dead (pass empty to disable)")
+    ap.add_argument("--enterprise")
+    ap.add_argument("--enterprise-ref", default="origin/saas-19.4")
+    ap.add_argument("--enterprise-base-ref", default="origin/19.0")
+    ap.add_argument("--modules", help="comma-separated subset")
+    ap.add_argument("--only", help="comma-separated check kinds "
+                                   "(dead-hook,stale-override,js-import,js-symbol,"
+                                   "owl-xpath,owl-tref,owl-hook,python-api,patch-target,"
+                                   "patch-shadow,view-xmlid,view-anchor,security-model,"
+                                   "field-lit,manifest-version)")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--quiet", action="store_true", help="only print findings")
+    args = ap.parse_args()
+
+    odoo = Tree(args.odoo, args.odoo_ref, "odoo")
+    ent = Tree(args.enterprise, args.enterprise_ref, "enterprise") if args.enterprise else None
+    if ent is None and not args.quiet:
+        log("WARNING: --enterprise not given; enterprise-only imports and views "
+            "will be reported as missing.")
+    target = Target(odoo, ent)
+
+    base = None
+    if args.odoo_base_ref:
+        base_ent = (Tree(args.enterprise, args.enterprise_base_ref, "enterprise-base")
+                    if args.enterprise else None)
+        base = Target(Tree(args.odoo, args.odoo_base_ref, "odoo-base"), base_ent)
+
+    wanted = [m.strip() for m in args.modules.split(",")] if args.modules else None
+    modules = discover_modules(args.repo, wanted)
+    own = set(discover_modules(args.repo, None))
+    kinds = {k.strip() for k in args.only.split(",")} if args.only else None
+    want = kinds or {
+        "dead-hook", "stale-override", "js-import", "js-symbol", "owl-xpath",
+        "owl-tref", "owl-hook", "python-api", "patch-target", "patch-shadow",
+        "view-xmlid", "view-anchor", "security-model", "field-lit",
+        "manifest-version",
+    }
+
+    if not args.quiet:
+        log(f"repo        {args.repo} ({len(modules)} module(s))")
+        log(f"odoo        {args.odoo} @ {args.odoo_ref}")
+        log(f"enterprise  {args.enterprise} @ {args.enterprise_ref}" if ent else "enterprise  (none)")
+        log(f"base        {args.odoo_base_ref}" if base else "base        (none - hook check "
+            "cannot classify removals)")
+        log()
+
+    # Inheritance graph over EVERY module in the repo, not just the subset under test:
+    # a chain through a sibling module must resolve even with --modules.
+    # Skip the scan when --only does not include hook kinds (js-symbol-only runs
+    # used to wait on this for no reason).
+    repo_models = (RepoModels(args.repo, sorted(own))
+                   if want & {"dead-hook", "stale-override"} else None)
+
+    findings: list[Finding] = []
+    for module in modules:
+        fs: list[Finding] = []
+        if want & {"dead-hook", "stale-override"}:
+            fs += check_dead_hooks(args.repo, module, target, repo_models, base)
+        if want & {"js-import", "js-symbol", "owl-hook", "patch-target", "patch-shadow"}:
+            fs += check_js(args.repo, module, target, own)
+        if want & {"owl-xpath", "owl-tref"}:
+            fs += check_owl_templates(args.repo, module)
+        if "python-api" in want:
+            fs += check_python_api(args.repo, module)
+        if "view-xmlid" in want:
+            fs += check_views(args.repo, module, target, own)
+        if "view-anchor" in want:
+            fs += check_view_anchors(args.repo, module, target, own)
+        if "security-model" in want:
+            fs += check_security_models(args.repo, module, target)
+        if "field-lit" in want:
+            fs += check_field_literals(args.repo, module)
+        if "manifest-version" in want:
+            fs += check_manifest_version(args.repo, module, target)
+        if kinds:
+            fs = [f for f in fs if f.kind in kinds]
+        findings += fs
+
+    if args.json:
+        print(json.dumps([f.as_dict() for f in findings], indent=2))
+    else:
+        by_kind: dict[str, list[Finding]] = defaultdict(list)
+        for f in findings:
+            by_kind[f.kind].append(f)
+        for kind in ("dead-hook", "js-import", "js-symbol", "owl-xpath", "owl-tref",
+                     "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
+                     "view-anchor", "security-model", "field-lit", "manifest-version",
+                     "stale-override"):
+            group = by_kind.get(kind)
+            if not group:
+                continue
+            log(f"{'=' * 78}\n{kind}  ({len(group)})\n{'=' * 78}")
+            for f in group:
+                log(f"  {f.path}:{f.line}")
+                log(f"      {f.detail}")
+            log()
+        if not findings and not args.quiet:
+            log("no findings")
+        elif findings:
+            log(f"{len(findings)} finding(s). A clean run is a precondition, not proof of a "
+                f"working port - runtime gates still apply (rule 22).")
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
