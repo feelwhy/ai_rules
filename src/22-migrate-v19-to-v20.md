@@ -118,6 +118,29 @@ ordering. Pick probes whose byte order and case-insensitive order genuinely diff
 `LOWER(` in `_order_to_sql(...).code`; keep the row-order assertion only as a smoke test that the
 term is valid SQL.
 
+### Portal sharing field list: current-serie cache, both refs
+
+`project.task._portal_accessible_fields` is `@ormcache(cache='stable')` at **both** pins
+(19.0 `:1048`, saas-19.4 `:1077`). Portal `fields_get` / `_has_field_access` then keeps only that
+frozen set. The sharing form arch is ordinary inherited XML and is **not** filtered the same way.
+
+`task_custom_fields` extends `TASK_PORTAL_READABLE_FIELDS` / `TASK_PORTAL_WRITABLE_FIELDS` from live
+`custom.task.field` rows (`portal_edit_placement`). `_generate_xml` writes those names into
+`project.project_sharing_project_task_view_form`. The stable cache does not invalidate on that
+write. A portal collaborator then gets `TypeError: "project.task"."x_oz_tsk_N" field is undefined`
+in `Field.parseFieldNode` (arch has the node, `get_views` `models.fields` does not).
+
+This is a defect on the **current** serie (ledger `source_serie_defects` id 6). Do **not** paper it
+over on 20 only (do not drop the field from the sharing arch, do not sudo `fields_get` for portal).
+Fix on 19.0: invalidate `project.task._portal_accessible_fields` from `custom.task.field`
+create/write/`_generate_xml`. A process restart only refreshes the cache until the next write.
+
+The checker cannot see this: both hooks exist at both refs, and a grep for `TASK_PORTAL` + `search(`
+would stay red after a correct invalidate-on-write. Prove it with HTTP `get_views` on the **running**
+worker as a portal user (a new `odoo shell` process has a fresh cache and hides the hole). 19.0
+demo data leaves `portal_edit_placement` empty, so the sharing form never injects `x_oz_tsk_*` and
+the hole stays latent there.
+
 ## Python
 
 ### Manifest version — drop the serie prefix on the saas stand-in
@@ -207,6 +230,29 @@ icp.set_bool("my.flag", True)   # or set_str if the value is really a string
 Do not keep `safe_eval(get_param(..., "False"))` for a boolean — that is the 19.0 string
 convention. Call `get_bool`. A leftover `get_param` is an `AttributeError` at runtime, not a
 silent miss.
+
+### `Registry.clear_cache` is gone
+
+`Registry.clear_cache` / `clear_all_caches` exist at 19.0 (`odoo/orm/registry.py:998`) and are
+**absent** at saas-19.4. The successor is `Environment.transaction.invalidate_ormcache`
+(`odoo/orm/environments.py:833`). The cache key names (`stable`, `templates`, `default`,
+`routing`, `assets`, `groups`) are the same; a bare `clear_cache()` is `invalidate_ormcache()`
+(default key).
+
+Observed on the saas-19.4 image during `20_c` B1 tests: `AttributeError: 'Registry' object has
+no attribute 'clear_cache'` when the 19.0 defect-6 fix was copied verbatim. Core itself now
+does this (e.g. `analytic_plan.py:274`, `ir_model.py:1107`). Checker kind is `python-api`.
+In `tools@19.0` this is also `cloud_base`, `knowsystem*`, `joint_calendar`, `documentation_builder`,
+`odoo_menu_management`, `odoo_email_from`, `odoo_password_manager`.
+
+```python
+# BEFORE
+self.env.registry.clear_cache("stable")
+self.env.registry.clear_cache()
+# AFTER
+self.env.transaction.invalidate_ormcache("stable")
+self.env.transaction.invalidate_ormcache()
+```
 
 ### `mail` Store API redesigned around `Store.FieldList`
 
@@ -563,7 +609,7 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template; those attributes moved (`t-custom-ref`, `t-ref="this.x"`) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache`) |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
 | `patch-shadow` | a `patch(X.prototype, …)` member that upstream declares as a **class field** on the patched class or an ancestor — an own instance property shadows it, so it never runs, on any serie |
 | `view-xmlid` | an `inherit_id` ref to a core view that no longer exists |
@@ -640,6 +686,9 @@ These are not settled by source reading. Do not write them into a port as fact:
 - Whether 20.0's optional-product rule on `sale.order.line` affects your line creation.
 - Attendance access-rights and geolocation RPC changes for kiosk-facing code.
 - Which deprecation warnings **your** code actually triggers (test-window log on the pinned image).
+- Portal sharing `get_views` on the **running** worker (arch vs `fields_get` for `x_oz_*` / other
+  `TASK_PORTAL_*` extras). A new shell process resets `@ormcache(cache='stable')` and is not that
+  check. See **Portal sharing field list** above.
 
 ## Learned while porting
 
@@ -703,3 +752,21 @@ without evidence does not belong in this rule.
   observed at neutralize and were still missing from this rule. The checker now has
   `js-symbol`, `owl-xpath`, `owl-tref`, `owl-hook`, `python-api`. A path-only "OWL clean"
   is not a finding.
+- *(2026-09-14, `20_c` Gx.8 review)* Opening a task in project sharing edit as the portal
+  collaborator died with `TypeError: "project.task"."x_oz_tsk_1" field is undefined` at
+  `Field.parseFieldNode`. The sharing form arch had `x_oz_tsk_1` (Version
+  `portal_edit_placement=left_panel_group`); the running worker's portal `get_views` omitted it
+  from `models.fields`. Admin and demo HTTP `get_views` included it. A new `odoo shell` on the
+  same DB included it for portal too — `_portal_accessible_fields` is `@ormcache(cache='stable')`
+  at **both** refs (19.0 `project_task.py:1048`, saas-19.4 `:1077`), so the first call in that
+  process freezes the set. `task_custom_fields` fills `TASK_PORTAL_*` from
+  `custom.task.field` and writes the arch in `_generate_xml` without invalidating that cache.
+  19.0 demo leaves `portal_edit_placement` empty, so the generated sharing groups stay empty and
+  the hole is latent. Not a 20-only `fields_get` / `ir.access` miss. Not a checker kind (both
+  hooks exist; a `TASK_PORTAL`+`search(` grep would stay red after a correct invalidate-on-write).
+  Ledger defect 6. Fix on 19.0 (`a9154df3008`: `registry.clear_cache("stable")`). On saas-19.4
+  that call is itself an `AttributeError` — use `env.transaction.invalidate_ormcache("stable")`
+  (see **Registry.clear_cache**).
+- *(2026-09-14, `20_c` B1 tests)* Copying the 19.0 defect-6 commit onto `20_c` died at
+  `Registry.clear_cache`. Successor confirmed at saas-19.4 `environments.py:833`. Checker
+  `python-api` now flags `.clear_cache(`.

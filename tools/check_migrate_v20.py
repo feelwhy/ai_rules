@@ -12,7 +12,8 @@ phase-1 analysis proved are findable statically:
   owl-xpath         an OWL t-inherit XPath selecting @t-ref / @t-esc on a core template
   owl-tref          an OWL-2 named t-ref / t-model / t-portal in our own static/src template
   owl-hook          useEffect(fn, deps) from @odoo/owl — OWL 3 ignores the deps array
-  python-api        a call to a core method gone at the target (get_param / set_param)
+  python-api        a call to a core method gone at the target
+                    (get_param / set_param / Registry.clear_cache)
   patch-target      a `patch()` on an import path that no longer resolves
   patch-shadow      a prototype patch of a member upstream declares as a class field
   manifest-version  a serie-prefixed manifest version while --odoo-ref is a saas-* branch
@@ -27,6 +28,11 @@ Design notes that matter (learned the hard way in phase 1):
 * Counts are derived from `ast` / XML parsing, never regex, and occurrence counts are never
   presented as a work estimate.
 * Nothing here proves a working port. Runtime gates still apply (see rule 22).
+* Portal sharing "field is undefined" (`x_oz_tsk_*` in the arch, missing from portal
+  `get_views` `models.fields`) is a current-serie `@ormcache(cache='stable')` hole on
+  `project.task._portal_accessible_fields` (both refs). It is not a dead-hook and must
+  not become a `TASK_PORTAL`+`search(` kind: that would stay red after a correct
+  invalidate-on-write. Prove it with HTTP `get_views` on the running worker as portal.
 
 Usage:
   python3 tools/check_migrate_v20.py --repo /path/to/tools \
@@ -115,6 +121,10 @@ REMOVED_PYTHON_CALLS = {
     "set_param":
         "ir.config_parameter.set_param is gone; use set_str / set_bool / "
         "set_int / set_float.",
+    "clear_cache":
+        "Registry.clear_cache is gone; use "
+        "env.transaction.invalidate_ormcache('stable') "
+        "(or 'templates' / 'default').",
 }
 
 OWL_DESTRUCTURE_RE = re.compile(
