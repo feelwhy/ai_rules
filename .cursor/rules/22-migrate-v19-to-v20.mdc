@@ -11,8 +11,9 @@ renames them. **Do not write `20.0.x.y.z` while the stand-in is a saas branch** 
 **Manifest version** below. Override in the module, never edit `odoo/`.
 
 **This rule is living.** Every fact below is source-confirmed against a stated pin. When a port
-reveals a new fact, update this rule and `tools/check_migrate_v20.py` **first**, in their own chunk,
-then resume the module.
+reveals a new fact: decide the fix, apply it, prove it, then write the fact here and into
+`tools/check_migrate_v20.py` in the same job. Pause only for a current-serie defect that must
+be fixed on 19.0 first, or when there is a real choice of successor.
 
 Tested pins (2026-09-12, pre-release):
 
@@ -72,8 +73,74 @@ Confirmed dead hooks on `saas-19.4`:
 | `mail.thread._get_store_message_update_extra_fields` | `_store_message_fields` — moved to `mail.message` |
 | `res.users._init_store_data` | `_store_init_fields` / `_store_init_global_fields` |
 | `ir.attachment._inverse_datas` | `_inverse_raw` |
+| `BaseModel._check_access(operation)` | **name survives**, never called. `_access_domain` + `res_access_*` (see below) |
 
 `tracking=True` on a field is **still valid** (`mail.track.mixin._valid_field_parameter`).
+
+### `_check_access` is dead even though the name survives
+
+`check_access` / `has_access` / `_filtered_access` are `@typing.final` at saas-19.4
+(`odoo/orm/models.py:3371`) and call `_access_domain`. `_check_access` still exists
+(`:3499`) but is `@deprecated("Since 20.0, use Model._access_domain instead")` and is
+**never called**. Overriding it is a silent miss: a write that used to raise
+`AccessError` succeeds.
+
+Observed on `20_14` Gx.7: `TestCloudsFolderPreparing.test3_security_rights_check`
+`AssertionError: AccessError not raised` at `rule_folder_1.with_user(...).write({})`.
+Gx.2 on 19.0 is green for the same test.
+
+Successor: match `ir.attachment` / `mail.activity`:
+
+1. `_access_domain_heavy = True`
+2. Computed searchable `res_access_read` / `res_access_write`
+   (`groups=fields.NO_ACCESS`, `compute_sudo=True`,
+   `depends_context=('uid',)` plus every field the old `_check_access` read —
+   `depends_context=('uid',)` alone caches a True after the first
+   `has_access` and misses a later `access_user_ids` / `rule_id` write)
+3. `_compute_res_access` / `_search_res_access` — body of the old `_check_access`
+   **minus** `super()` ACL
+4. `_access_domain(operation)` = `super() & Domain(f"res_access_{op}", "=", True)`
+   with create/unlink mapped to write
+5. Delete `_check_access`
+
+In compute, use `self.sudo(False)` before `_inaccessible_comodel_records` (that
+helper no-ops when `env.su`). Do **not** skip checks because `compute_sudo` makes
+`env.su` True.
+
+`has_access('read')` short-circuits on `env.transaction.access_read` (keyed by
+uid). `_check_access` re-evaluated every call; after the port, a write that
+changes the data `_access_domain` reads must
+`self.env.transaction.invalidate_access_cache(self._name)` or the next read
+keeps the old True. Core mail tests do the same after changing the related
+record.
+
+An override that only passed context into `super()._check_access` (e.g.
+`cloud_base` `ir.attachment` `ir_attachment_security`) becomes the same context on
+`_inaccessible_comodel_records`.
+
+In `tools@19.0`: `cloud_base` (folder + attachment), `message_edit`,
+`joint_calendar`, `business_appointment`. Checker kind is `dead-hook` via
+`DEAD_DESPITE_EXISTING` — a name-exists check reports clean.
+
+### x2many to `res.users` hides inactive rows
+
+saas-19.4 Many2many read (`odoo/orm/fields_relational.py`) splits out inactive
+comodel rows (`active_test=True` by default). The write still stores them; the
+next `record.user_ids` is empty. 19.0 returned OdooBot / archived users on the
+same field.
+
+A security compute that builds an allow-list from a Many2many to `res.users`
+(or `res.groups` → users) must read
+`record.with_context(active_test=False).<m2m>`. Otherwise a write of
+`base.user_root` (inactive) is a silent no-op: stored restriction stays `[]`,
+`has_access` stays True. Observed on `20_14` Gx.7 Case 5
+(`clouds.folder._compute_restricted_users`). Not a 19.0 defect — Gx.2 is green.
+
+Do **not** "fix" this by pointing the test at an active user. That drops the
+19.0 meaning (an archived-only restriction still locks the folder).
+
+No reliable checker kind: a `Many2many("res.users")` grep is every user-tags
+field. Read the compute.
 
 ### Ordering hooks: dead before 19.0, same successor on both refs
 
@@ -194,17 +261,56 @@ my_pref_field = fields.Boolean(string="My Preference", user_writeable=True)
 `datas` no longer exists. `_check_contents` pops it and emits `warnings.warn("Use raw, datas has
 beeen removed")`, so a `create`/`write` carrying `datas` **succeeds and stores nothing**.
 
-This is also an encoding change: `datas` was base64, `raw` is bytes.
+This is also an encoding change: `datas` was base64. `raw` is a `BinaryValue`
+(`odoo.tools.binary`), not a `bytes`. Read the payload as `record.raw.content`.
+A write still accepts bytes.
 
 ```python
 # BEFORE
 self.env["ir.attachment"].create({"name": fname, "datas": base64.b64encode(content)})
 # AFTER
 self.env["ir.attachment"].create({"name": fname, "raw": content})
+# READ
+payload = record.raw.content  # bytes; record.raw itself is BinaryValue
 ```
 
-Audit every attachment write, not just the ones a grep highlights. Reading is affected too: use
-`raw` (bytes) and encode only at the boundary that needs base64.
+Audit every attachment write, not just the ones a grep highlights. Encode to
+base64 only at the boundary that still needs it.
+
+saas `_to_http_stream` (`odoo/addons/base/models/ir_attachment.py:990`) is a
+different hole from `datas`. After `store_fname` it does
+`elif self.url: return Stream(type='url', url=self.url)`, then
+`data = self.raw.content`. 19.0 used `elif self.db_datas` and streamed
+`self.raw` as bytes — it never redirected a URL-only attachment. A synced
+`type=url` row with no filestore file therefore **sends the browser to the
+cloud URL** unless the module overrides `_to_http_stream`. Observed `20_14`
+Gx.8: File Manager `/web/image/<attach_id>` and Documents FileViewer
+`/web/image/<docId>?model=documents.document`. Successor in `cloud_base`:
+override, fetch only when `_cloud_http_may_fetch` allows (`download` /
+`cloud_preview` / preview group / Documents model or path), and return an
+empty `type=data` stream for a bare list/kanban thumb.
+
+### `odoo.http` is a package — `Stream` / `content_disposition` moved
+
+19.0 is a single `odoo/http.py`. saas-19.4 is `odoo/http/` (`__init__.py` at the pin). That
+file re-exports `request`, `Controller`, `route`, `Response`. It does **not** re-export
+`Stream` or `content_disposition` — those live in `odoo/http/stream.py`.
+
+Observed on the saas-19.4 image during `20_14` Gx.6: `ImportError: cannot import name
+'Stream' from 'odoo.http'` while loading `cloud_base`. A leftover
+`from odoo.http import content_disposition` fails the same way. Checker kind is
+`python-api` (import form). In `tools@19.0` this is `cloud_base` (3 sites) and
+`short_urls` (1).
+
+```python
+# BEFORE
+from odoo.http import Stream, content_disposition, request
+# AFTER
+from odoo.http import request
+from odoo.http.stream import Stream, content_disposition
+```
+
+Keep `from odoo.http import request` / `Controller` / `route`. Do not "fix" those.
 
 ### `ir.config_parameter.get_param` / `set_param` are gone
 
@@ -264,12 +370,27 @@ return Store().add(messages).get_result()
 
 # AFTER (20.0): fields mandatory and positional, no get_result
 def add(self, records, fields, *, as_thread=False, fields_params=None, ignore_empty=False)
-return Store().add(messages, "_store_message_fields")
+store = Store().add(messages, "_store_message_fields")
+# jsonrpc serializes Store via as_dict(); do not call get_result
 ```
 
-The model-side hooks moved with it. The old hooks appended to a dict or returned a list of names;
-the new ones receive a `Store.FieldList` and call `res.attr(...)` / `res.extend([...])`. This is a
-rewrite, not a rename — budget real work for any module that formats mail data.
+Attachment box (`cloud_base` `/cloud_base/attachments/data`): same hole. Successor matches
+core `mail` upload (`attachment.py:85`):
+
+```python
+store = Store()
+if attachments:
+    store.add(attachments, lambda res: (
+        res.from_method("_store_attachment_fields"),
+        res.from_method("_store_ownership_fields"),
+    ))
+return {"data": store, "attachments": attachments.ids}
+```
+
+Checker `python-api` flags `.get_result(`. The model-side hooks moved with it. The old hooks
+appended to a dict or returned a list of names; the new ones receive a `Store.FieldList` and
+call `res.attr(...)` / `res.extend([...])`. This is a rewrite, not a rename — budget real work
+for any module that formats mail data.
 
 ### `stock.move.product_uom` renamed to `uom_id`
 
@@ -391,17 +512,84 @@ into one group with a single `tag_ids`. `complementary_lead_data` inherited that
 
 For every inherit of a core view, verify each anchor exists in the target arch:
 
-- an `xpath` `expr` predicate — `//group[@name='lead_priority']`
-- a tag carrying `position=` — `<group name="lead_priority" position="inside">`
+- an `xpath` `expr` predicate — `//group[@name='lead_priority']` or `//div[@id='portal_service_category']`
+- a tag carrying `position=` — `<group name="lead_priority" position="inside">` or
+  `<div id="portal_service_category" position="inside">`
 
-The checker's `view-anchor` kind does this mechanically, and is a **signal in both directions**: it
-looks the name up across all target XML, so an anchor that moved to another model's view is a miss,
-and one built in Python rather than XML would be a false positive. Read the target arch before
-deleting an xpath.
+The checker's `view-anchor` kind does this mechanically (both `name` and `id`), and is a
+**signal in both directions**: it looks the token up across all target XML, so an anchor that
+moved to another model's view is a miss, and one built in Python rather than XML would be a
+false positive. Read the target arch before deleting an xpath.
 
 When the anchor is genuinely gone, prefer dropping the redundant hook over inventing a new one —
 here the surviving `<field name="tag_ids" position="before">` already placed the widget, so the
 second block was deleted rather than retargeted.
+
+### Portal home cards: `portal.entry`, not QWeb into `portal_service_category`
+
+19.0 `portal.portal_my_home` has `<div id="portal_service_category"/>`. Modules dumped a
+`portal.portal_docs_entry` call into that node (`cloud_base`, `knowsystem_website`,
+`odoo_password_manager`, `documentation_builder`, `business_appointment_website`).
+
+saas-19.4 dropped the node. The home page iterates `portal.entry` records
+(`sale/data/portal_entry_data.xml`). `_prepare_home_portal_values` still feeds
+`placeholder_count` via `/my/counters`.
+
+```xml
+<!-- BEFORE — dies: Element '<div id="portal_service_category">' cannot be located -->
+<template id="portal_my_home" inherit_id="portal.portal_my_home">
+    <div id="portal_service_category" position="inside">
+        <t t-call="portal.portal_docs_entry">…</t>
+    </div>
+</template>
+
+<!-- AFTER -->
+<record id="portal_shares" model="portal.entry">
+    <field name="name">Shares</field>
+    <field name="description">Check and download shared attachments</field>
+    <field name="url">/clouds/shares</field>
+    <field name="image" type="bytes" file="cloud_base/static/src/img/portal.svg"/>
+    <field name="placeholder_count">shares_count</field>
+    <field name="category">service_category</field>
+    <field name="sequence" eval="110"/>
+</record>
+```
+
+Keep the counter method. Do not xpath a surviving `o_portal_docs` wrapper and re-call
+`portal_docs_entry` — that template now requires a `portal.entry` record (`entry.url`,
+`entry.should_show_portal_card()`). Observed `20_14` Gx.6 `cloud_base` install after the
+`Stream` import was already fixed. Checker `view-anchor` now sees the `id=` form.
+
+### `t-call` inner `t-set` does not reach the callee
+
+19.0 `t-call` copied `values` and applied inner `t-set` to that copy, so
+
+```xml
+<t t-call="portal.message_thread">
+    <t t-set="object" t-value="share_id"/>
+</t>
+```
+
+set `object` on `portal.message_thread`. saas-19.4 `_compile_directive_call`
+(`ir_qweb.py:2682`) compiles the body as the `t-out="0"` slot only;
+`t_call_values` starts as `{0: qwebContent}`. Inner `t-set` never reaches the
+callee → `KeyError: 'object'` and a 500. Core sale/account set `object` on the
+page via `_get_page_view_values` and use an empty `<t t-call="portal.message_thread"/>`.
+Successor: write `object` / `token` / `breadcrumbs_searchbar` on the controller
+values, **or** put them on the `t-call` tag (`breadcrumbs_searchbar="True"`),
+or `t-set` **before** the `t-call` as a sibling. Inner `t-set` of
+`breadcrumbs_searchbar` is why portal shares rendered **two** `/ Shares / …`
+rows: `portal.portal_layout` never saw the flag (so it printed crumbs at its
+first `t-call`) and the slot later set the flag for `portal.portal_searchbar`
+(second row). Core sale writes:
+
+```xml
+<t t-call="portal.portal_layout" breadcrumbs_searchbar="True">
+    <t t-call="portal.portal_searchbar" breadcrumbs_searchbar="True" title.translate="Quotations"/>
+```
+
+Checker kind `qweb-tcall` flags a first-child `t-set` of `breadcrumbs_searchbar`
+/ `object` / `token` / `title`. Observed `20_14` Gx.8 token share.
 
 ### `product.product_variant_easy_edit_view` removed
 
@@ -495,6 +683,89 @@ named `t-ref="root"`.
 `//article[@t-ref='root']` / `//div[@t-ref='shadowBody']` — the inherit will not match.
 Checker kind: `owl-xpath`.
 
+**`o-kanban-button-new` left `web.KanbanView`.** At 19.0 the New button sits in
+`control-panel-create-button` on `web.KanbanView` (`kanban_controller.xml:8`). At
+saas-19.4 that slot is gone; the button lives on `web.KanbanView.Buttons` (`:101`)
+and the view `t-call`s `this.props.buttonTemplate`. An inherit of `web.KanbanView`
+that xpaths `//button[hasclass('o-kanban-button-new')]` dies at template compile
+(`Element '…' cannot be located in element tree`) — File Manager, KnowSystem,
+KPI Scorecard. Successor: inherit `web.KanbanView.Buttons` (primary), same xpath;
+core does this (`product` catalog, `hr_expense`, `project`). Checker `owl-xpath`
+now flags `hasclass()` that is absent from the inherited `t-name` at the target.
+
+**`t-if` / `t-elif` inherit matches the exact attribute string.** OWL `applyInheritance`
+looks up the opening tag, not the method name. saas-19.4 prefixed `mail.AttachmentList`
+`canDownload(attachment)` with `this.` (19.0 `:91`, saas-19.4 the same file). A leftover
+`<button t-elif="canDownload(attachment)" position="after">` dies at compile
+(`Element '…' cannot be located`) and **kills every chatter attachment box**, not just
+File Manager. Successor: `t-elif="this.canDownload(attachment)"`. Drop a dead
+`<img t-else="">` hook — that node is a `div` on both refs. Checker `owl-xpath` now
+indexes `(tag, t-if|t-elif|t-else, value)` per inherited `t-name`. A hasclass-only
+pass reported this clean.
+
+**Bare `state` / `props` / `model` in a `t-inherit` template is undefined.** OWL 3
+does not put those names in the compile scope. Core saas templates write
+`this.state` / `this.props` / `this.model` (19.0 `kanban_renderer.xml` still has
+bare `state.selectionAvailable`; saas-19.4 has `this.state.selectionAvailable`).
+File Manager then died with `Cannot read properties of undefined (reading
+'reloaded')` at `CloudManagersKanbanRenderer`, then
+`ctx.getCloudManagerNavigationProps is not a function`. Prefix `this.` on every
+inherit expression, including `t-props="this.getX()"`. Checker kind: `owl-this`.
+Same `this.` prefix on standalone OWL templates (`panelState`, getters,
+`t-props="this.getX()"`) **and** on `xml\`...\`` literals in JS. Portal
+`jsTreePortal` used `t-if="state.treeData"` — the left folder/tag column
+rendered empty (no TypeError in the public page). Checker `owl-this` now
+scans `xml\` templates too. File Manager `CloudNavigation` died on bare
+`panelState.collapsed` after the inherit expressions were already prefixed.
+
+**jstree + `owl.proxy` / `state` plugin:** do not keep the tree payload on a
+reactive `proxy`. jstree mutates `core.data` in place; a proxy write re-renders
+OWL, replaces the host node, and the `state` plugin's `get_state` then does
+`this.element.scrollLeft()` with `this.element === null`
+(`TypeError: Cannot read properties of null (reading 'scrollLeft')`).
+The stack often names `jstree.plugins.contextmenu.get_state` — that is the
+last plugin on the prototype chain, not a contextmenu bug. The state plugin
+binds `changed`/`ready` and schedules `save_state` on a **100ms timer**;
+`destroy()` nulls `this.element` first, then the timer fires.
+
+A parent OWL `proxy` write is enough to remount the tree. In File Manager
+chatter that write was `this.state.cloudsFolderId = nextId` inside
+`onRefreshAttachmentBoxWithFolder` (called from `state_ready`). Keep the
+folder id on a **plain instance field** (`this.cloudsFolderId`); only
+`folderExist` belongs on the proxy. Bind `onUpdateSearch` once in `setup`.
+
+Successor: store the payload on `this.treeData`, pass a **copy** into
+`core.data`, bind the host with `t-custom-ref` + `window.jQuery(ref.el)`,
+**do not remount on `onPatched`**, **patch `$.jstree.core.prototype.get_state`**
+to no-op when `!this.element`, and **stub `save_state`/`get_state` on the
+instance before every `jstree("destroy")`**. Do **not** skip destroy on a
+disconnected host — that leaves the 100ms timer armed. A `t-if` that needs
+reactivity should key a boolean (`ready`), not the tree array. Observed
+`20_14` Gx.8 chatter attachment box after the Store / canDownload fixes
+already landed — off-proxy alone was not enough; skip-destroy was not
+enough either.
+
+**Do NOT drop the `state` plugin as a fix for that crash.** It was tried
+here and is wrong: `state_ready.jstree` (emitted only by the `state`
+plugin) is what the `check_node`/`changed`/`open_node`/`search` bindings
+*and the very first `_onUpdateDomain()` call* wait on in this module's
+`CloudJsTreeContainer._renderJsTree`. Dropping the plugin for the chatter
+tree (`!fileUi`) didn't just disable state restore — it silently disabled
+**all** folder-selection handling, so the attachment box stopped filtering
+by folder and stopped tracking `cloudsFolderId` (uploads fell back to the
+record). A missing feature discovered later ("selection not restored",
+"folder does not filter attachments") is the signal that a plugin got
+dropped instead of the actual crash cause being fixed.
+
+**`portal.message_thread` heading:** saas starts with a bare
+`<h3>Communication History</h3>`. A wrapper `class="row"` (19.0) applies
+a negative gutter; saas `#wrapwrap` / nested `.container` clips the first
+letter. Putting the `t-call` in a **sibling** of `.row` with only `mt32`
+is still clipped. Successor: drop the extra inner `.container` (portal
+layout already wraps the slot), and put `#share_communication` in
+`class="col-12"` **inside** the existing row so the heading sits in the
+gutter padding. 19.0 used the same `.row` and did not clip.
+
 Our own templates that still write `t-ref="start-date"` should become `t-custom-ref="start-date"`
 to match core datetime fields and the compat `useRef("start-date")`. Same rename for
 `t-model` → `t-custom-model` (`email_suite` `scheduled_date_dialog_patch.xml`) and
@@ -536,6 +807,12 @@ unless a runtime error names them.
 
 - **`@web/core/ensure_jquery`** — gone. It used to load `web._assets_jquery` plus the Bootstrap
   jQuery plugins. Rewrite the call site without jQuery; do not reintroduce a loader.
+- **`/web/static/lib/jquery/jquery.js`** — gone with the same deletion (`addons/web/static/lib/jquery`
+  is present at 19.0, absent at saas-19.4). `loadJS` of that URL is an `AssetsLoadingError`.
+  File Manager / jstree still needs `$` and already vendors `jstree.min.js`. Successor: copy the
+  19.0 `jquery.js` (MIT, currently 3.6.3) next to it as `/<module>/static/lib/jquery/jquery.js`
+  and retarget every `loadJS`. Do not rewrite the tree in the same job. Checker `js-import`
+  flags the old URL. Observed `20_14` Gx.8 after the `o-kanban-button-new` xpath landed.
 - **`@html_editor/others/dynamic_placeholder_plugin`** (`DynamicPlaceholderPlugin`) — gone.
 - **`@html_builder/utils/option_sequence`** (`before`, `after`, `VERTICAL_ALIGNMENT`, `WIDTH`) —
   gone. Sequencing is now **numeric**: `withSequence(N, object)` from `@html_editor/utils/resource`.
@@ -601,18 +878,20 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 
 | Kind | Meaning |
 |---|---|
-| `dead-hook` | the hook existed at the **base** ref and is gone at the target — a silent break |
+| `dead-hook` | the hook existed at the **base** ref and is gone at the target — a silent break. Also `_check_access`: the name survives but `check_access` is `@typing.final` (`DEAD_DESPITE_EXISTING`) |
 | `stale-override` | absent at **both** refs — already dead before this port; a defect on the current serie, not porting work |
-| `js-import` | an `@mod/path` import resolving to no file in `odoo` or `enterprise` |
+| `js-import` | an `@mod/path` import resolving to no file in `odoo` or `enterprise`, or a `loadJS` URL deleted at the target (`/web/static/lib/jquery/jquery.js`) |
 | `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid |
-| `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template; those attributes moved (`t-custom-ref`, `t-ref="this.x"`) |
+| `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
+| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses bare `state.` / `props.` / `model.` — OWL 3 compile scope is `this.*` |
+| `qweb-tcall` | first-child `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` on a `t-call` — saas-19.4 slot only |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), or a named import that left `odoo.http` (`Stream` / `content_disposition`) |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
 | `patch-shadow` | a `patch(X.prototype, …)` member that upstream declares as a **class field** on the patched class or an ancestor — an own instance property shadows it, so it never runs, on any serie |
 | `view-xmlid` | an `inherit_id` ref to a core view that no longer exists |
-| `view-anchor` | an inherit anchor (`@name=` predicate, or a `position=` tag's `name`) that exists in no target view — a signal, see the caveat above |
+| `view-anchor` | an inherit anchor (`@name=` / `@id=` predicate, or a `position=` tag's `name` / `id`) that exists in no target view — a signal, see the caveat above |
 | `security-model` | a data file declaring `ir.rule` / `ir.model.access`, gone at the target; CSV findings mean **rename the file** |
 | `field-lit` | a literal use of a removed field name |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
@@ -667,10 +946,33 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
 - **A surviving JS file is not a surviving export.** `js-import` asks whether `@mod/path`
   resolves. `Deferred` left `concurrency.js` in place and still broke 158 core call sites.
   `js-symbol` reads the named import against that file's `export` list.
+- **A `loadJS` URL is not an `@mod/path`.** `js-import` never saw
+  `/web/static/lib/jquery/jquery.js`. saas-19.4 deleted the file; File Manager
+  then died with `AssetsLoadingError` after the xpath was already clean.
+  `GONE_JS_PATHS` scans the same JS walk.
+- **Bare `state.` in a `t-inherit` is not a `t-ref`.** OWL 3 compile scope is
+  `this`. Core saas templates already write `this.state`. `owl-this` scans
+  inherit bodies, standalone OWL templates (`t-props="getX()"`), **and**
+  `xml\`...\`` literals in JS. A file-only `t-name` walk missed portal
+  `jsTreePortal` (`t-if="state.treeData"`).
+- **Inner `t-set` of a `t-call` is the slot, not the callee.** 19.0 forced
+  `str(qwebContent)` when the call had only `t-*` attrs plus child `t-set`
+  (`is_deprecated_version`). saas-19.4 deleted that. Checker `qweb-tcall`
+  flags a first-child `t-set` of `breadcrumbs_searchbar` / `object` /
+  `token` / `title`. Sale writes those as `t-call` attributes.
+- **A surviving method name is not a surviving inherit.** OWL `applyInheritance`
+  matches the opening-tag attribute string. `t-elif="canDownload(attachment)"`
+  does not match saas `t-elif="this.canDownload(attachment)"`. `hasclass()`
+  indexing reported that chatter inherit clean. `owl-xpath` now indexes
+  `(tag, t-if|t-elif|t-else, value)` on `position=` tags.
 - **`view-anchor` collects only nodes an inherit *targets*.** A `name` inside an added block, or an
   `<attribute name="invisible">` under `position="attributes"`, is not an anchor; only an `expr`
-  predicate and a tag carrying `position=` are. Without that distinction every field a module adds
-  becomes a finding. It also does not see OWL `t-inherit` XPath on `@t-ref` — that is `owl-xpath`.
+  predicate (`@name=` or `@id=`) and a tag carrying `position=` (`name` or `id`) are. Walk
+  `<record>` **and** `<template inherit_id>` — a record-only scan missed
+  `portal_service_category` on `portal.portal_my_home`. A name-only scan missed the
+  `<div id="…" position="inside">` form. Without the target/add distinction every field a
+  module adds becomes a finding. It also does not see OWL `t-inherit` XPath on `@t-ref` —
+  that is `owl-xpath`.
 - **The target node-name set rides on the existing XML walk.** `view_xmlids()` already `git show`s
   every XML file in both trees, so the anchor lookup is a set membership, not one `git grep` per
   anchor (553 `position=` tags in `tools` would otherwise mean 553 greps).
@@ -769,3 +1071,94 @@ without evidence does not belong in this rule.
 - *(2026-09-14, `20_c` B1 tests)* Copying the 19.0 defect-6 commit onto `20_c` died at
   `Registry.clear_cache`. Successor confirmed at saas-19.4 `environments.py:833`. Checker
   `python-api` now flags `.clear_cache(`.
+- *(2026-09-14, `20_14` Gx.6)* `odoo.http` is a package. `__init__.py` does not re-export
+  `Stream` / `content_disposition`. `cloud_base` died at import (`cannot import name
+  'Stream'`). Successor: `odoo.http.stream`. Checker `python-api` now flags the import form.
+- *(2026-09-14, `20_14` Gx.6)* After the import landed, install died on
+  `portal.portal_my_home`: `id="portal_service_category"` is gone. Cards are `portal.entry`
+  records. A name-only **and** record-only `view-anchor` both missed it (`<template
+  inherit_id>` + `<div id="…" position="inside">`). Five 19.0 modules still hook that node.
+- *(2026-09-14, `20_14` Gx.7)* `_check_access` still exists at saas-19.4 and the
+  checker reported clean. `check_access` is `@typing.final` and uses `_access_domain`.
+  `TestCloudsFolderPreparing.test3_security_rights_check` Case 1 (rule-folder
+  write) passed after the port. Case 5 stayed red for two independent saas
+  facts: (1) `has_access('read')` short-circuits on `transaction.access_read`
+  — field `depends` is not enough, `write` must
+  `invalidate_access_cache(self._name)`; (2) after that cache was empty,
+  `access_user_ids` still read `[]` because saas x2many hides inactive
+  `res.users` (`base.user_root`). Compute must use `active_test=False`.
+  Checker `DEAD_DESPITE_EXISTING` for (1) only.
+- *(2026-09-15, `20_14` Gx.8)* Opening File Manager died with
+  `Element '<xpath expr="//button[hasclass('o-kanban-button-new')]">' cannot be
+  located`. The class moved from `web.KanbanView` to `web.KanbanView.Buttons`
+  (19.0 `kanban_controller.xml:8`, saas-19.4 `:101`). Same hole on 19.0
+  `knowsystem` and `kpi_scorecard`. Moved the upload/URL replace onto
+  `cloud_base.CloudBaseViewButtons` (`t-inherit-mode="primary"`). Checker
+  `owl-xpath` now indexes OWL `t-name` classes in `/static/` (the QWeb
+  `view-anchor` walk skips that tree).
+- *(2026-09-15, `20_14` Gx.8)* After that xpath landed, File Manager died on
+  `AssetsLoadingError: The loading of /web/static/lib/jquery/jquery.js failed`.
+  The file is at 19.0 `addons/web/static/lib/jquery/jquery.js` and **absent**
+  at saas-19.4 (whole `jquery/` dir gone with `ensure_jquery`). jstree is
+  already vendored in `cloud_base` and still needs `$`. Copied 19.0 jquery
+  3.6.3 to `cloud_base/static/lib/jquery/jquery.js` and retargeted every
+  `loadJS`. Checker `js-import` now flags the old URL. Same leftover in later
+  groups that still `loadJS` the core path.
+- *(2026-09-15, `20_14` Gx.8)* After jquery loaded, File Manager died on
+  `TypeError: Cannot read properties of undefined (reading 'reloaded')` in
+  `CloudManagersKanbanRenderer`. OWL 3 inherit templates do not bind bare
+  `state` / `props`. Core saas `web.KanbanRenderer` writes `this.state`.
+  Prefixed the inherit expressions. Next compile error was
+  `ctx.getCloudManagerNavigationProps is not a function` — same `this.`
+  on `t-props`. Checker `owl-this` also flags `t-props="getX()"` without
+  `this.`.
+- *(2026-09-15, `20_14` Gx.8)* Opening a contact chatter attachment box died
+  with `Element '<button t-elif="canDownload(attachment)" …>' cannot be
+  located`. The button is still on `mail.AttachmentList`; saas writes
+  `t-elif="this.canDownload(attachment)"` (OWL 3 `this.`). Inherit matches
+  the attribute string, not the method. Slideshow then died on the already-
+  known leftover `t-props="getPhotosSlideShowProps()"` / bare `state.playing`.
+  Checker `owl-xpath` now indexes OWL `t-if` / `t-elif` / `t-else` on
+  `position=` tags. A hasclass-only pass reported the chatter inherit clean.
+- *(2026-09-15, `20_14` Gx.8)* After that inherit landed, opening the same
+  attachment box died on `Store().add(attachments).get_result()` —
+  `AttributeError: 'Store' object has no attribute 'get_result'`. Already in
+  this rule; checker `python-api` did not flag `.get_result(`. Token share
+  with `show_chatter` stayed 500 on `KeyError: 'object'`: saas `t-call` no
+  longer applies inner `t-set` to the callee.
+- *(2026-09-15, `20_14` Gx.8)* Same attachment box then died on jstree
+  `get_state` → `this.element.scrollLeft()` with `this.element === null`.
+  `CloudJsTreeContainer` kept `treeData` on `owl.proxy`; jstree mutated it,
+  OWL replaced the host, the `state` plugin saved. Tree payload is now
+  `this.treeData`; host is `t-custom-ref` + `window.jQuery(ref.el)`.
+- *(2026-09-15, `20_14` Gx.8)* Token share still showed two `/ Shares / TEST`
+  breadcrumb rows and an empty folder/tag column. Inner
+  `t-set="breadcrumbs_searchbar"` never reached `portal.portal_layout`
+  (layout printed crumbs) while the slot later set the flag for
+  `portal.portal_searchbar` (second row). Sale successor:
+  `t-call … breadcrumbs_searchbar="True"`. The left column was already in
+  the HTML; `jsTreePortal`'s `xml\`` template still used bare `state.treeData`.
+  Checker `qweb-tcall` + `owl-this` on `xml\`` literals.
+- *(2026-09-15, `20_14` Gx.8)* Off-proxy `treeData` was not enough for the
+  attachment box. Chatter `state_ready` → `this.state.cloudsFolderId = …`
+  (OWL proxy) remounts `CloudJsTreeContainer`; the state plugin's 100ms
+  `save_state` then reads `this.element.scrollLeft` of null. Stack names
+  `contextmenu.get_state` because that plugin is last on the chain. Keep
+  the folder id off the proxy, patch `get_state` when `!this.element`,
+  stub `save_state` before `destroy`. Do not drop the `state` plugin and
+  do not skip `destroy` on a detached host. Portal `jsTreePortal` keeps
+  `treeData` off `proxy`; `ready` stays on `proxy` for the `t-if`.
+- *(2026-09-15, `20_14` Gx.8)* Token-share `Communication History` heading
+  was half-cut. saas `portal.message_thread` is a bare `<h3>`. Dropping
+  our wrapper `class="row"` was not enough — the heading as a sibling of
+  the row (and inside a nested `.container`) is still clipped. Successor:
+  no inner container; `#share_communication` is `col-12` inside the row.
+- *(2026-09-15, `20_14` Gx.8)* saas `_to_http_stream` redirects
+  `type=url` when `store_fname` is empty (`ir_attachment.py:990`). 19.0
+  streamed `db_datas` / `raw` as bytes and never took that branch. Synced
+  File Manager thumbs then hit the cloud; Documents FileViewer
+  (`/web/image/${documentId}?model=documents.document`) showed the camera
+  placeholder when the gate only allowed `download` / `cloud_preview` /
+  the preview group. `raw` is `BinaryValue` — use `.content`. Allow
+  Documents `model=` / path; keep blocking bare `/web/image/{attach_id}`
+  (proved: PNG 1885×1098 vs `size=0`).

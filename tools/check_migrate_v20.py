@@ -5,15 +5,31 @@ Reads a repo of Odoo addons and target core/enterprise git refs, then reports th
 phase-1 analysis proved are findable statically:
 
   dead-hook    an override of a core hook that no longer exists ON THE INHERITED MODEL
-  js-import    an `@mod/path` import that resolves to no file in odoo or enterprise
+               (or still exists but the public path never calls it — see
+               DEAD_DESPITE_EXISTING, e.g. _check_access)
+  js-import    an `@mod/path` import that resolves to no file in odoo or enterprise,
+               or a loadJS/loadCSS URL deleted at the target
+               (/web/static/lib/jquery/jquery.js)
   view-xmlid   an `inherit_id` ref to a core view that no longer exists
   field-lit         a literal use of a removed field name (`datas`, `product_uom`)
   js-symbol         a named import whose file still exists but the export does not
-  owl-xpath         an OWL t-inherit XPath selecting @t-ref / @t-esc on a core template
+  owl-xpath         an OWL t-inherit XPath selecting @t-ref / @t-esc on a core
+                    template, or hasclass() of a class that left the inherited
+                    t-name (o-kanban-button-new left web.KanbanView), or a
+                    position= tag whose t-if/t-elif/t-else value is not on
+                    that t-name (canDownload vs this.canDownload)
   owl-tref          an OWL-2 named t-ref / t-model / t-portal in our own static/src template
+  owl-this          a t-inherit / standalone / xml` OWL template still uses
+                    bare state. / props. / model. (OWL 3 compile scope is this.*)
+  qweb-tcall        inner t-set of a t-call (breadcrumbs_searchbar / object /
+                    token / title) — saas-19.4 no longer copies those onto the
+                    callee; write a t-call attribute or a controller value
   owl-hook          useEffect(fn, deps) from @odoo/owl — OWL 3 ignores the deps array
   python-api        a call to a core method gone at the target
-                    (get_param / set_param / Registry.clear_cache)
+                    (get_param / set_param / Registry.clear_cache /
+                    Store.get_result)
+                    or a named import that left odoo.http
+                    (Stream / content_disposition)
   patch-target      a `patch()` on an import path that no longer resolves
   patch-shadow      a prototype patch of a member upstream declares as a class field
   manifest-version  a serie-prefixed manifest version while --odoo-ref is a saas-* branch
@@ -56,7 +72,7 @@ from functools import lru_cache
 
 # Field names removed upstream whose literal use fails silently (rule 22).
 REMOVED_FIELD_LITERALS = {
-    "datas": "ir.attachment.datas removed; use raw (bytes, not base64). Writes are silently dropped.",
+    "datas": "ir.attachment.datas removed; use raw (BinaryValue; bytes via .content, not base64). Writes are silently dropped.",
     "product_uom": "stock.move.product_uom renamed uom_id. NOTE: sale.order.line / "
                    "product.supplierinfo legitimately use product_uom_id - check the model.",
 }
@@ -125,6 +141,35 @@ REMOVED_PYTHON_CALLS = {
         "Registry.clear_cache is gone; use "
         "env.transaction.invalidate_ormcache('stable') "
         "(or 'templates' / 'default').",
+    "get_result":
+        "Store.get_result is gone; Store.add(records, fields) returns the "
+        "Store, and json_default calls as_dict(). Core mail upload uses "
+        "Store().add(attachment, lambda res: res.from_method("
+        "'_store_attachment_fields')).",
+}
+
+# Named imports that left odoo.http when it became a package (saas-19.4).
+# request / Controller / route / Response stay on odoo.http.
+HTTP_PACKAGE_MOVED = {
+    "Stream": "from odoo.http.stream import Stream",
+    "content_disposition": "from odoo.http.stream import content_disposition",
+}
+
+HTTP_FROM_RE = re.compile(
+    r"from\s+odoo\.http\s+import\s+(\([^)]*\)|[^\n]+)",
+    re.S,
+)
+
+# Hooks that still exist at the target but the public path no longer calls them.
+# check_access / has_access / _filtered_access are @typing.final and use _access_domain.
+# _check_access is @deprecated("Since 20.0, use Model._access_domain instead") and is
+# never invoked — a name-exists check reports clean and the override is a silent miss.
+DEAD_DESPITE_EXISTING = {
+    "_check_access": (
+        "check_access / has_access / _filtered_access are @typing.final and use "
+        "_access_domain; _check_access is @deprecated Since 20.0 and is never called. "
+        "Port to _access_domain + res_access_* (see ir.attachment / mail.activity)"
+    ),
 }
 
 OWL_DESTRUCTURE_RE = re.compile(
@@ -135,6 +180,42 @@ OWL_XPATH_TREF_RE = re.compile(
 )
 OWL_OWN_TREF_RE = re.compile(
     r"""(?<!@)t-(?:ref|model|portal)\s*=\s*["'](?!this\.)[^"']+["']"""
+)
+OWL_TNAME_OPEN_RE = re.compile(
+    r'<t\b([^>]*\bt-name="([^"]+)"[^>]*)>',
+    re.I | re.S,
+)
+OWL_TINHERIT_RE = re.compile(r'\bt-inherit="([^"]+)"')
+OWL_HASCLASS_RE = re.compile(r"""hasclass\(\s*['"]([^'"]+)['"]\s*\)""")
+# OWL 3 compiled templates no longer bind `state` / `props` / `model` as bare names.
+# Core inherit targets (web.KanbanRenderer, …) now write this.state / this.props.
+OWL_BARE_SCOPE_RE = re.compile(r"(?<![\w.])(state|props|model)\.")
+# OWL 3 compile: ctx.foo is not auto-bound. t-props="getX()" dies
+# (getCloudManagerNavigationProps is not a function).
+OWL_BARE_CALL_RE = re.compile(
+    r"""\b(?:t-props|t-out|t-esc)=["'](?!this\.)([A-Za-z_]\w*)\("""
+)
+OWL_CLASS_ATTR_RE = re.compile(r'\bclass="([^"]+)"')
+# Inline OWL templates (`xml\`...\``) are not t-name files. Bare state.
+# there still dies (portal jsTreePortal).
+OWL_XML_LIT_RE = re.compile(r"\bxml\s*`([\s\S]*?)`")
+# saas-19.4 dropped is_deprecated_version: inner t-set of a t-call is
+# the slot only. First child t-set of these keys never reaches the callee.
+QWEB_TCALL_INNER_SET_RE = re.compile(
+    r'<t\b[^>]*\bt-call="([^"]+)"[^>]*>\s*<t\b[^>]*\bt-set="'
+    r'(breadcrumbs_searchbar|object|token|title)"',
+    re.S,
+)
+# OWL inherit matches the full opening tag. saas-19.4 prefixed many
+# directives with this. (`canDownload` → `this.canDownload`); a leftover
+# 19.0 t-elif is then "cannot be located".
+OWL_OPEN_TAG_RE = re.compile(
+    r"<([A-Za-z][\w.]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*)>",
+    re.DOTALL,
+)
+OWL_DIR_ATTR_RE = re.compile(r"""\b(t-if|t-elif|t-else)=("[^"]*"|'[^']*')""")
+OWL_XPATH_DIR_PRED_RE = re.compile(
+    r"""//([A-Za-z][\w.]*)\[@(t-if|t-elif|t-else)=(?:&quot;|'|\")(.*?)(?:&quot;|'|\")\]"""
 )
 
 
@@ -380,6 +461,7 @@ class Target:
         node_names: set[str] = set()
         rec = re.compile(r'<record[^>]*\bid="([a-zA-Z0-9_.]+)"')
         name = re.compile(r'\bname="([^"]+)"')
+        html_id = re.compile(r'\bid="([^"]+)"')
         for tree in self.trees:
             for path in tree.paths:
                 if not path.endswith(".xml") or "/static/" in path or "/i18n/" in path:
@@ -397,6 +479,7 @@ class Target:
                 for xid in rec.findall(src):
                     ids.add(xid if "." in xid else f"{module}.{xid}")
                 node_names.update(name.findall(src))
+                node_names.update(html_id.findall(src))
         return ids, node_names
 
     def view_xmlids(self) -> set[str]:
@@ -404,6 +487,92 @@ class Target:
 
     def view_node_names(self) -> set[str]:
         return self._xml_index()[1]
+
+    @lru_cache(maxsize=1)
+    def owl_template_classes(self) -> dict[str, frozenset[str]]:
+        """`t-name` -> CSS classes in that OWL template at the target.
+
+        `_xml_index` skips `/static/`, so a class that moved between two
+        `t-name`s in the same file (web.KanbanView -> web.KanbanView.Buttons)
+        was invisible. Split on `t-name`, never on file.
+        """
+        out: dict[str, set[str]] = {}
+        for tree in self.trees:
+            seen: set[str] = set()
+            grep_out = tree.grep(r't-name=', "*.xml", raw_paths=True)
+            for line in grep_out.splitlines():
+                parts = line.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                path = parts[1]
+                if "/static/" not in path or path in seen:
+                    continue
+                seen.add(path)
+                src = tree.show(path)
+                if not src:
+                    continue
+                for _off, name, _inherit, body in _owl_template_spans(src):
+                    classes = set()
+                    for raw in OWL_CLASS_ATTR_RE.findall(body):
+                        classes.update(raw.split())
+                    out.setdefault(name, set()).update(classes)
+        return {name: frozenset(classes) for name, classes in out.items()}
+
+    @lru_cache(maxsize=1)
+    def owl_template_directives(self) -> dict[str, frozenset[tuple[str, str, str]]]:
+        """`t-name` -> {(tag, t-if|t-elif|t-else, value)} at the target.
+
+        OWL inherit matches the opening tag, so `t-elif="canDownload(attachment)"`
+        does not match saas `t-elif="this.canDownload(attachment)"`. hasclass()
+        indexing cannot see that.
+        """
+        out: dict[str, set[tuple[str, str, str]]] = {}
+        for tree in self.trees:
+            seen: set[str] = set()
+            grep_out = tree.grep(r't-name=', "*.xml", raw_paths=True)
+            for line in grep_out.splitlines():
+                parts = line.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                path = parts[1]
+                if "/static/" not in path or path in seen:
+                    continue
+                seen.add(path)
+                src = tree.show(path)
+                if not src:
+                    continue
+                for _off, name, _inherit, body in _owl_template_spans(src):
+                    out.setdefault(name, set()).update(_owl_directive_triples(body))
+        return {name: frozenset(triples) for name, triples in out.items()}
+
+
+def _owl_directive_triples(body: str) -> set[tuple[str, str, str]]:
+    triples = set()
+    for match in OWL_OPEN_TAG_RE.finditer(body):
+        tag, attrs = match.group(1), match.group(2)
+        dm = OWL_DIR_ATTR_RE.search(attrs)
+        if not dm:
+            continue
+        triples.add((tag, dm.group(1), dm.group(2)[1:-1]))
+    return triples
+
+
+def _owl_position_directive_triples(body: str):
+    """Yield `(offset, tag, attr, value)` for inherit anchors with position=."""
+    for match in OWL_OPEN_TAG_RE.finditer(body):
+        tag, attrs = match.group(1), match.group(2)
+        if "position=" not in attrs:
+            continue
+        dm = OWL_DIR_ATTR_RE.search(attrs)
+        if dm:
+            yield match.start(), tag, dm.group(1), dm.group(2)[1:-1]
+        if tag == "xpath":
+            expr_m = re.search(r'\bexpr="([^"]+)"', attrs)
+            if not expr_m:
+                continue
+            pred = OWL_XPATH_DIR_PRED_RE.search(expr_m.group(1))
+            if pred:
+                yield match.start(), pred.group(1), pred.group(2), pred.group(3)
 
 
 # ------------------------------------------------------------------ repo side
@@ -545,7 +714,8 @@ def check_dead_hooks(repo: str, module: str, target: Target, repo_models: RepoMo
 
     exists at base, gone at target -> dead-hook     (the 19 -> 20 break we care about)
     gone at both                   -> stale-override (pre-existing; not caused by this port)
-    exists at target               -> live; not reported
+    exists at target               -> live; not reported, except DEAD_DESPITE_EXISTING
+                                      (_check_access is still defined but never called)
 
     Comparing both refs is what makes this trustworthy. A target-only check cannot tell a
     fresh removal from an override that was already dead on 19.0, and it is exactly why the
@@ -587,9 +757,17 @@ def check_dead_hooks(repo: str, module: str, target: Target, repo_models: RepoMo
                     continue
                 if not calls_super(stmt):
                     continue
-                if any(target.model_defines(m, stmt.name) for m in core_chain):
-                    continue
                 models_txt = ", ".join(sorted(core_chain))
+                target_has = any(target.model_defines(m, stmt.name) for m in core_chain)
+                if target_has and stmt.name in DEAD_DESPITE_EXISTING:
+                    out.append(Finding(
+                        "dead-hook", module, rel, stmt.lineno,
+                        f"{stmt.name}() still exists on {models_txt} at the target "
+                        f"ref but is never called. {DEAD_DESPITE_EXISTING[stmt.name]}",
+                    ))
+                    continue
+                if target_has:
+                    continue
                 existed_at_base = base is not None and any(
                     base.model_defines(m, stmt.name) for m in core_chain
                 )
@@ -894,6 +1072,28 @@ def check_js(repo: str, module: str, target: Target, own_modules: set[str]) -> l
                                    f"patch({sym}) targets {spec}, which no longer resolves"))
         out += check_patch_shadow(module, rel, src, target, own_modules)
         out += check_js_symbols(module, rel, src, target, own_modules)
+        out += check_gone_js_paths(module, rel, src)
+    return out
+
+
+# Static URLs that 19.0 loadJS / loadCSS still hit and that saas-19.4 deleted.
+# Distinct from js-import: that kind only sees `@mod/path` specifiers.
+GONE_JS_PATHS = {
+    "/web/static/lib/jquery/jquery.js": (
+        "gone at saas-19.4 (addons/web/static/lib/jquery deleted). "
+        "jstree still needs $ — vendor 19.0 jquery next to it "
+        "(/<module>/static/lib/jquery/jquery.js) and retarget loadJS. "
+        "Do not reintroduce @web/core/ensure_jquery"
+    ),
+}
+
+
+def check_gone_js_paths(module: str, rel: str, src: str) -> list[Finding]:
+    out: list[Finding] = []
+    for lineno, line in enumerate(src.splitlines(), 1):
+        for path, hint in GONE_JS_PATHS.items():
+            if path in line:
+                out.append(Finding("js-import", module, rel, lineno, f"{path} {hint}"))
     return out
 
 
@@ -968,8 +1168,21 @@ def check_js_symbols(module: str, rel: str, src: str, target: Target,
     return out
 
 
-def check_owl_templates(repo: str, module: str) -> list[Finding]:
-    """OWL t-inherit XPath on @t-ref, and OWL-2 named t-ref in our own templates."""
+def _owl_template_spans(src: str):
+    """Yield `(offset, t-name, t-inherit or '', body)` per OWL `t-name` in `src`."""
+    opens = list(OWL_TNAME_OPEN_RE.finditer(src))
+    for i, match in enumerate(opens):
+        attrs, name = match.group(1), match.group(2)
+        inherit_m = OWL_TINHERIT_RE.search(attrs)
+        inherit = inherit_m.group(1) if inherit_m else ""
+        end = opens[i + 1].start() if i + 1 < len(opens) else len(src)
+        yield match.start(), name, inherit, src[match.end():end]
+
+
+def check_owl_templates(repo: str, module: str, target: Target | None = None) -> list[Finding]:
+    """OWL t-inherit XPath on @t-ref, OWL-2 named t-ref, dead hasclass(), and dead t-if/t-elif."""
+    parent_classes = target.owl_template_classes() if target is not None else {}
+    parent_dirs = target.owl_template_directives() if target is not None else {}
     out: list[Finding] = []
     for full, rel in walk(repo, module, ".xml"):
         rel_posix = rel.replace(os.sep, "/")
@@ -992,14 +1205,119 @@ def check_owl_templates(repo: str, module: str) -> list[Finding]:
                     "t-custom-ref / t-custom-model / t-custom-portal. "
                     "Leftover core t-ref is t-ref=\"this.fooRef\" (OWL 3 signal).",
                 ))
+        for off, _name, inherit, body in _owl_template_spans(src):
+            for bm in OWL_BARE_SCOPE_RE.finditer(body):
+                lineno = src.count("\n", 0, off) + body[:bm.start()].count("\n") + 1
+                where = "t-inherit" if inherit else "OWL"
+                out.append(Finding(
+                    "owl-this", module, rel, lineno,
+                    f"{where} template uses bare {bm.group(1)}. "
+                    f"OWL 3 / saas-19.4 core writes this.{bm.group(1)}. "
+                    f"Bare name is undefined (TypeError on .{bm.group(1)}).",
+                ))
+            for cm in OWL_BARE_CALL_RE.finditer(body):
+                lineno = src.count("\n", 0, off) + body[:cm.start()].count("\n") + 1
+                where = "t-inherit" if inherit else "OWL"
+                out.append(Finding(
+                    "owl-this", module, rel, lineno,
+                    f"{where} template calls {cm.group(1)}() without this. "
+                    f"OWL 3 compile scope is ctx; methods are this.{cm.group(1)}().",
+                ))
+            if inherit and inherit in parent_dirs:
+                known_dirs = parent_dirs[inherit]
+                for doff, tag, attr, val in _owl_position_directive_triples(body):
+                    if (tag, attr, val) in known_dirs:
+                        continue
+                    lineno = src.count("\n", 0, off) + body[:doff].count("\n") + 1
+                    hint = ""
+                    if attr == "t-elif" and val == "canDownload(attachment)":
+                        hint = (
+                            " Successor: t-elif=\"this.canDownload(attachment)\" "
+                            "(OWL 3 this. on mail.AttachmentList)."
+                        )
+                    out.append(Finding(
+                        "owl-xpath", module, rel, lineno,
+                        f"t-inherit {tag} {attr}={val!r} is not on {inherit} at "
+                        f"the target.{hint}",
+                    ))
+            if not parent_classes or not inherit or inherit not in parent_classes:
+                continue
+            known = parent_classes[inherit]
+            for hm in OWL_HASCLASS_RE.finditer(body):
+                cls = hm.group(1)
+                if cls in known:
+                    continue
+                lineno = src.count("\n", 0, off) + body[:hm.start()].count("\n") + 1
+                hint = ""
+                if cls == "o-kanban-button-new" and inherit == "web.KanbanView":
+                    hint = " Successor: inherit web.KanbanView.Buttons (core did)."
+                out.append(Finding(
+                    "owl-xpath", module, rel, lineno,
+                    f"t-inherit XPath hasclass({cls!r}) is not in {inherit} at "
+                    f"the target ref.{hint}",
+                ))
+    for full, rel in walk(repo, module, ".js"):
+        src = read(full)
+        for match in OWL_XML_LIT_RE.finditer(src):
+            body = match.group(1)
+            off = match.start(1)
+            for bm in OWL_BARE_SCOPE_RE.finditer(body):
+                lineno = src.count("\n", 0, off + bm.start()) + 1
+                out.append(Finding(
+                    "owl-this", module, rel, lineno,
+                    f"xml` template uses bare {bm.group(1)}. "
+                    f"OWL 3 compile scope is this.{bm.group(1)} "
+                    f"(portal jsTreePortal state.treeData).",
+                ))
+            for cm in OWL_BARE_CALL_RE.finditer(body):
+                lineno = src.count("\n", 0, off + cm.start()) + 1
+                out.append(Finding(
+                    "owl-this", module, rel, lineno,
+                    f"xml` template calls {cm.group(1)}() without this. "
+                    f"OWL 3 compile scope is ctx; methods are this.{cm.group(1)}().",
+                ))
     return out
+
+
+def check_qweb_tcall(repo: str, module: str) -> list[Finding]:
+    """Inner t-set of a t-call is the slot only at saas-19.4."""
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/" in rel_posix:
+            continue
+        src = read(full)
+        for match in QWEB_TCALL_INNER_SET_RE.finditer(src):
+            lineno = src.count("\n", 0, match.start()) + 1
+            out.append(Finding(
+                "qweb-tcall", module, rel, lineno,
+                f"t-call {match.group(1)!r} inner t-set={match.group(2)!r} "
+                f"does not reach the callee (saas-19.4 dropped "
+                f"is_deprecated_version). Successor: t-call attribute "
+                f"({match.group(2)}=\"True\") or a controller / sibling t-set. "
+                f"sale portal writes breadcrumbs_searchbar=\"True\".",
+            ))
+    return out
+
+
+def _http_import_names(clause: str) -> list[str]:
+    clause = clause.strip()
+    if clause.startswith("("):
+        clause = clause.strip("()")
+    names = []
+    for part in clause.split(","):
+        tok = part.strip().split("#", 1)[0].strip()
+        if tok:
+            names.append(tok.split()[0])
+    return names
 
 
 def check_python_api(repo: str, module: str) -> list[Finding]:
     out: list[Finding] = []
     pats = {name: re.compile(rf"\.{re.escape(name)}\s*\(") for name in REMOVED_PYTHON_CALLS}
     for full, rel in walk(repo, module, ".py"):
-        for lineno, line in enumerate(read(full).splitlines(), 1):
+        src = read(full)
+        for lineno, line in enumerate(src.splitlines(), 1):
             stripped = line.lstrip()
             if stripped.startswith("#"):
                 continue
@@ -1007,6 +1325,15 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                 if pats[name].search(line):
                     out.append(Finding("python-api", module, rel, lineno,
                                        f"{name}(): {why}"))
+        for m in HTTP_FROM_RE.finditer(src):
+            lineno = src.count("\n", 0, m.start()) + 1
+            for name in _http_import_names(m.group(1)):
+                if name in HTTP_PACKAGE_MOVED:
+                    out.append(Finding(
+                        "python-api", module, rel, lineno,
+                        f"from odoo.http import {name}: saas-19.4 http is a package and "
+                        f"does not re-export this name. {HTTP_PACKAGE_MOVED[name]}",
+                    ))
     return out
 
 
@@ -1061,7 +1388,7 @@ def check_views(repo: str, module: str, target: Target, own_modules: set[str]) -
             continue
         src = read(full)
         for lineno, line in enumerate(src.splitlines(), 1):
-            for xid in INHERIT_REF_RE.findall(line):
+            for xid in INHERIT_REF_RE.findall(line) + TEMPLATE_INHERIT_RE.findall(line):
                 if "." not in xid:
                     continue
                 if xid.split(".")[0] in own_modules:
@@ -1073,8 +1400,11 @@ def check_views(repo: str, module: str, target: Target, own_modules: set[str]) -
 
 
 RECORD_BLOCK_RE = re.compile(r"<record\b.*?</record>", re.S)
+TEMPLATE_BLOCK_RE = re.compile(r"<template\b.*?</template>", re.S)
+TEMPLATE_INHERIT_RE = re.compile(r'\binherit_id="([\w.]+)"')
 XPATH_EXPR_RE = re.compile(r'expr="([^"]*)"')
-EXPR_NAME_RE = re.compile(r"""@name\s*=\s*['"]([^'"]+)['"]""")
+EXPR_NAME_RE = re.compile(r"""@(?:name|id)\s*=\s*['"]([^'"]+)['"]""")
+ID_ATTR_RE = re.compile(r'\bid="([^"]+)"')
 OPEN_TAG_RE = re.compile(r"<([a-zA-Z_][\w.-]*)\b([^>]*)>", re.S)
 NAME_ATTR_RE = re.compile(r'\bname="([^"]+)"')
 
@@ -1082,10 +1412,12 @@ NAME_ATTR_RE = re.compile(r'\bname="([^"]+)"')
 def _view_anchors(block: str):
     """(offset, name) for every node this inherit block *targets*.
 
-    Two forms, both unambiguous: a `@name=` predicate inside an `xpath` `expr`, and a tag
-    carrying `position=` (its `name` is the anchor). Nodes we merely *add* have no
-    `position`, so they are not anchors - and `position="attributes"` children
-    (`<attribute name="invisible">`) are not either.
+    Two forms, both unambiguous: a `@name=` / `@id=` predicate inside an `xpath` `expr`,
+    and a tag carrying `position=` (its `name` or `id` is the anchor). Nodes we merely
+    *add* have no `position`, so they are not anchors - and `position="attributes"`
+    children (`<attribute name="invisible">`) are not either. `id=` is load-bearing:
+    saas-19.4 dropped `portal_service_category` and the inherit used
+    `<div id="…" position="inside">`, which a name-only scan missed.
     """
     for m in XPATH_EXPR_RE.finditer(block):
         for anchor in EXPR_NAME_RE.findall(m.group(1)):
@@ -1097,6 +1429,9 @@ def _view_anchors(block: str):
         named = NAME_ATTR_RE.search(attrs)
         if named:
             yield m.start(), named.group(1)
+        ided = ID_ATTR_RE.search(attrs)
+        if ided:
+            yield m.start(), ided.group(1)
 
 
 def check_view_anchors(repo: str, module: str, target: Target,
@@ -1118,21 +1453,24 @@ def check_view_anchors(repo: str, module: str, target: Target,
         if "/static/" in rel_posix:
             continue
         src = read(full)
-        for block in RECORD_BLOCK_RE.finditer(src):
-            refs = INHERIT_REF_RE.findall(block.group(0))
-            foreign = [r for r in refs if "." in r and r.split(".")[0] not in own_modules]
-            if not foreign:
-                continue
-            for off, anchor in _view_anchors(block.group(0)):
-                if anchor in known:
+        for block_re in (RECORD_BLOCK_RE, TEMPLATE_BLOCK_RE):
+            for block in block_re.finditer(src):
+                refs = INHERIT_REF_RE.findall(block.group(0))
+                refs += TEMPLATE_INHERIT_RE.findall(block.group(0))
+                foreign = [r for r in refs if "." in r
+                           and r.split(".")[0] not in own_modules]
+                if not foreign:
                     continue
-                lineno = src.count("\n", 0, block.start() + off) + 1
-                out.append(Finding(
-                    "view-anchor", module, rel, lineno,
-                    f"anchor name={anchor!r} exists in no view at the target ref "
-                    f"(inherits {', '.join(foreign)}). Read the target arch: the node was "
-                    f"renamed, merged away, or moved.",
-                ))
+                for off, anchor in _view_anchors(block.group(0)):
+                    if anchor in known:
+                        continue
+                    lineno = src.count("\n", 0, block.start() + off) + 1
+                    out.append(Finding(
+                        "view-anchor", module, rel, lineno,
+                        f"anchor name/id={anchor!r} exists in no view at the target ref "
+                        f"(inherits {', '.join(foreign)}). Read the target arch: the node was "
+                        f"renamed, merged away, or moved.",
+                    ))
     return out
 
 
@@ -1246,8 +1584,8 @@ def main() -> int:
     ap.add_argument("--modules", help="comma-separated subset")
     ap.add_argument("--only", help="comma-separated check kinds "
                                    "(dead-hook,stale-override,js-import,js-symbol,"
-                                   "owl-xpath,owl-tref,owl-hook,python-api,patch-target,"
-                                   "patch-shadow,view-xmlid,view-anchor,security-model,"
+                                   "owl-xpath,owl-tref,owl-this,owl-hook,python-api,patch-target,"
+                                   "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
                                    "field-lit,manifest-version)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
@@ -1272,8 +1610,8 @@ def main() -> int:
     kinds = {k.strip() for k in args.only.split(",")} if args.only else None
     want = kinds or {
         "dead-hook", "stale-override", "js-import", "js-symbol", "owl-xpath",
-        "owl-tref", "owl-hook", "python-api", "patch-target", "patch-shadow",
-        "view-xmlid", "view-anchor", "security-model", "field-lit",
+        "owl-tref", "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow",
+        "view-xmlid", "view-anchor", "qweb-tcall", "security-model", "field-lit",
         "manifest-version",
     }
 
@@ -1299,14 +1637,16 @@ def main() -> int:
             fs += check_dead_hooks(args.repo, module, target, repo_models, base)
         if want & {"js-import", "js-symbol", "owl-hook", "patch-target", "patch-shadow"}:
             fs += check_js(args.repo, module, target, own)
-        if want & {"owl-xpath", "owl-tref"}:
-            fs += check_owl_templates(args.repo, module)
+        if want & {"owl-xpath", "owl-tref", "owl-this"}:
+            fs += check_owl_templates(args.repo, module, target)
         if "python-api" in want:
             fs += check_python_api(args.repo, module)
         if "view-xmlid" in want:
             fs += check_views(args.repo, module, target, own)
         if "view-anchor" in want:
             fs += check_view_anchors(args.repo, module, target, own)
+        if "qweb-tcall" in want:
+            fs += check_qweb_tcall(args.repo, module)
         if "security-model" in want:
             fs += check_security_models(args.repo, module, target)
         if "field-lit" in want:
@@ -1324,8 +1664,8 @@ def main() -> int:
         for f in findings:
             by_kind[f.kind].append(f)
         for kind in ("dead-hook", "js-import", "js-symbol", "owl-xpath", "owl-tref",
-                     "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
-                     "view-anchor", "security-model", "field-lit", "manifest-version",
+                     "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
+                     "view-anchor", "qweb-tcall", "security-model", "field-lit", "manifest-version",
                      "stale-override"):
             group = by_kind.get(kind)
             if not group:
