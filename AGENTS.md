@@ -1761,6 +1761,14 @@ Successor:
    `[(1, '=', 1)]` on the 20.0 permission. Empty is indistinguishable from a forgotten ACL;
    the checker flags only empty, not explicit TRUE.
 4. Do not invent `group_id` on a rule that was global.
+5. Narrowing **this module's** empty rows is not enough. Another installed
+   module (`sale_stock.access_stock_location_user`, `purchase_stock`,
+   `pos_stock`, `stock_account`) can ship an empty permission on the same
+   model. Inherit that xmlid only when it is a hard `depends`; otherwise
+   AND the 19.0 filter in `_access_domain` and skip Super / `env.su`.
+   Observed `20_6` Gx.8: demo (Inventory Administrator + Sales Own Documents
+   Only, not Super) read `NY/Stock` while quants and operation types stayed
+   hidden — only location had the `sale_stock` TRUE row.
 
 Observed `20_5` Gx.8: empty `access_kpi_item` for `group_kpi_user` ORed away
 `kpi_item_multi_company_rule` (`access_user_ids`). Demo saw every KPI. Same shape:
@@ -2225,7 +2233,7 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `view-xmlid` | an `inherit_id` ref to a core view that no longer exists |
 | `view-anchor` | an inherit anchor (`@name=` / `@id=` predicate, or a `position=` tag's `name` / `id`) that exists in no target view — a signal, see the caveat above |
 | `security-model` | a data file declaring `ir.rule` / `ir.model.access`, gone at the target; CSV findings mean **rename the file** |
-| `access-or` | a grouped `ir.access` with an **empty** domain on a model that also has a grouped row with a real domain and overlapping ops — empty is `Domain.TRUE` and ORs the filter away. Explicit `[(1, '=', 1)]` is not this kind. Restrictions (no `group_id`) AND and are safe |
+| `access-or` | a grouped `ir.access` with an **empty** domain on a model that also has a grouped row with a real domain and overlapping ops — empty is `Domain.TRUE` and ORs the filter away. Explicit `[(1, '=', 1)]` is not this kind. Restrictions (no `group_id`) AND and are safe. Also a **core/enterprise** empty permission on a model this module domains, unless the module ANDs via `_access_domain` |
 | `access-grant` | a `base.group_user` permission with write ops (`c`/`u`/`d`) on a model that also has a product-group permission — 19.0 `ir.rule` on Internal User was a filter, not an ACL grant |
 | `field-lit` | a literal use of a removed field name |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
@@ -2334,6 +2342,11 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
   `<field .../>` separately from `<field>...</field>`: a `[^>]*` that
   swallows the `/` of `/>` ate `model_id` and hid every grouped XML
   domain (`total_notify_user`) on the first run.
+- **A module-local `access-or` pass does not see `sale_stock`.** Empty
+  permissions that OR the filter live in another addon. `access-or` now
+  reads target `security/ir.access.csv` for models this module domains.
+  An `_access_domain` override on that model is the successor when the
+  other module is not a hard depend (`20_6` location / demo + salesman).
 
 ## Verify at runtime, not from this rule
 
@@ -2566,6 +2579,17 @@ without evidence does not belong in this rule.
   every Internal User write on `kpi.item` / `kpi.category` / `kpi.tag`.
   19.0 ACL for those models was `group_kpi_user` read-only. Successor:
   product-group + 19.0 ops. Checker `access-grant`.
+- *(2026-09-16, `20_6` Gx.8)* Demo read restricted `NY/Stock` (Own/All =
+  Doris Cole only) without Super Warehouse Manager. Quants and operation
+  types stayed hidden. Live `ir.access` on `stock.location` included
+  `sale_stock.access_stock_location_user` (`sales_team.group_sale_salesman`,
+  empty domain → `Domain.TRUE` at `ir_access.py:308`). Demo has Sales
+  "User: Own Documents Only". `_access_domain` after OR was only company.
+  Successor: AND the 19.0 `user_ids` filter in `_access_domain` on
+  location / quant / move / move.line / picking / picking.type; skip Super
+  and `env.su`. Do not hard-depend `sale_stock` just to inherit that xmlid.
+  Checker `access-or` now scans core/enterprise empty permissions on models
+  this module domains, and stays quiet when `_access_domain` is defined.
 
 ## 30-command-vocabulary
 

@@ -14,7 +14,9 @@ phase-1 analysis proved are findable statically:
   field-lit         a literal use of a removed field name (`datas`, `product_uom`)
   access-or         a grouped ir.access with an empty domain next to another
                     grouped row on the same model that has a real domain —
-                    empty is Domain.TRUE and ORs the filter away (rule 22)
+                    empty is Domain.TRUE and ORs the filter away (rule 22).
+                    Also a core/enterprise empty permission on a model this
+                    module domains, unless the module ANDs via _access_domain
   access-grant      a base.group_user permission with write ops on a model
                     that also has a product-group permission — 19.0 ir.rule
                     on Internal User was a filter, not an ACL grant (rule 22)
@@ -1814,7 +1816,41 @@ def _iter_ir_access_csv(src: str, rel: str):
         }
 
 
-def check_access_or(repo: str, module: str) -> list[Finding]:
+def _module_overrides_access_domain(repo: str, module: str, model: str) -> bool:
+    """True when this module defines `_access_domain` on `model`."""
+    needle_inherit = re.compile(
+        rf"""_inherit\s*=\s*(?:\[[^\]]*['"]{re.escape(model)}['"]|['"]{re.escape(model)}['"])"""
+    )
+    for full, rel in walk(repo, module, ".py"):
+        if "/tests/" in rel.replace(os.sep, "/"):
+            continue
+        src = read(full)
+        if needle_inherit.search(src) and re.search(r"def\s+_access_domain\s*\(", src):
+            return True
+    return False
+
+
+def _target_empty_permissions(target: "Target") -> dict[str, list[dict]]:
+    """Empty grouped ir.access rows in core/enterprise, keyed by model."""
+    cached = getattr(target, "_empty_permissions", None)
+    if cached is not None:
+        return cached
+    out: dict[str, list[dict]] = defaultdict(list)
+    for tree in target.trees:
+        for path in tree.paths:
+            if not path.endswith("security/ir.access.csv"):
+                continue
+            src = tree.show(path)
+            if not src:
+                continue
+            for row in _iter_ir_access_csv(src, f"{tree.label}:{path}"):
+                if row["group"] and row["kind"] == "empty" and row["model"]:
+                    out[row["model"]].append(row)
+    target._empty_permissions = out
+    return out
+
+
+def check_access_or(repo: str, module: str, target: "Target | None" = None) -> list[Finding]:
     """Empty grouped ir.access ORs away a sibling domain (rule 22)."""
     rows: list[dict] = []
     for full, rel in walk(repo, module, ".xml", ".csv"):
@@ -1858,6 +1894,25 @@ def check_access_or(repo: str, module: str) -> list[Finding]:
                 f"this row, drop the empty ACL if a same-group domain "
                 f"permission already covers the ops, or write [(1, '=', 1)] "
                 f"if 19.0 had an intentional all-records rule.",
+            ))
+        if target is None:
+            continue
+        if _module_overrides_access_domain(repo, module, model):
+            continue
+        sibling = real[0]
+        for empty in _target_empty_permissions(target).get(model, ()):
+            if not (empty["ops"] & sibling["ops"]):
+                continue
+            out.append(Finding(
+                "access-or", module, empty["path"], empty["line"],
+                f"core/enterprise {empty['id'] or empty['group']} on {model} "
+                f"has an empty domain; saas ORs permissions so it hides "
+                f"{sibling['id'] or sibling['group']} "
+                f"({sibling['path']}:{sibling['line']}). Inherit that xmlid "
+                f"and put the domain on it (only if the other module is a "
+                f"hard depend), or AND the filter in `_access_domain` "
+                f"(skip Super). Narrowing only this module's rows is not "
+                f"enough — sale_stock location was the 20_6 hole.",
             ))
     return out
 
@@ -2055,7 +2110,7 @@ def main() -> int:
         if "security-model" in want:
             fs += check_security_models(args.repo, module, target)
         if "access-or" in want:
-            fs += check_access_or(args.repo, module)
+            fs += check_access_or(args.repo, module, target)
         if "access-grant" in want:
             fs += check_access_grant(args.repo, module)
         if "field-lit" in want:
