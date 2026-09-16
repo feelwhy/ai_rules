@@ -18,8 +18,10 @@ phase-1 analysis proved are findable statically:
                     Also a core/enterprise empty permission on a model this
                     module domains, unless the module ANDs via _access_domain
   access-grant      a base.group_user permission with write ops on a model
-                    that also has a product-group permission — 19.0 ir.rule
-                    on Internal User was a filter, not an ACL grant (rule 22)
+               that also has a product-group permission — 19.0 ir.rule
+               on Internal User was a filter, not an ACL grant (rule 22)
+  access-op         ir.access.operation is not a CRUD_SELECTION key
+               (letters stay in crud order: cr not rc)
   js-symbol         a named import whose file still exists but the export does not
   owl-xpath         an OWL t-inherit XPath selecting @t-ref / @t-esc on a core
                     template, or hasclass() of a class that left the inherited
@@ -531,6 +533,47 @@ class Target:
 
     def view_node_names(self) -> set[str]:
         return self._xml_index()[1]
+
+    @lru_cache(maxsize=1)
+    def _view_record_index(self) -> dict[str, str]:
+        """xmlid -> full `<record>` / `<template>` source at the target.
+
+        Parent-bound `view-anchor` needs the inherited view's own arch, not the
+        global name set. `project.view_task_kanban` still exists at saas-19.4
+        but is a `card_id` shell — `priority` lives on `view_task_card`.
+        """
+        rec_re = re.compile(
+            r'<record\b[^>]*\bid="([a-zA-Z0-9_.]+)"[^>]*>.*?</record>',
+            re.S,
+        )
+        tmpl_re = re.compile(
+            r'<template\b[^>]*\bid="([a-zA-Z0-9_.]+)"[^>]*>.*?</template>',
+            re.S,
+        )
+        out: dict[str, str] = {}
+        for tree in self.trees:
+            for path in tree.paths:
+                if not path.endswith(".xml") or "/static/" in path or "/i18n/" in path:
+                    continue
+                parts = path.split("/")
+                if path.startswith("addons/"):
+                    module = parts[1]
+                elif path.startswith("odoo/addons/"):
+                    module = parts[2]
+                else:
+                    module = parts[0]
+                src = tree.show(path)
+                if not src:
+                    continue
+                for cre, blob in ((rec_re, src), (tmpl_re, src)):
+                    for m in cre.finditer(blob):
+                        xid = m.group(1)
+                        key = xid if "." in xid else f"{module}.{xid}"
+                        out[key] = m.group(0)
+        return out
+
+    def view_record_src(self, xid: str) -> str | None:
+        return self._view_record_index().get(xid)
 
     @lru_cache(maxsize=1)
     def owl_template_classes(self) -> dict[str, frozenset[str]]:
@@ -1159,6 +1202,16 @@ GONE_JS_PATHS = {
     ),
 }
 
+# Method calls that left a surviving file. Distinct from js-symbol (named imports).
+GONE_JS_CALLS = {
+    "._replaceWith(": (
+        "StaticList._replaceWith is gone at saas-19.4 (19.0 "
+        "static_list.js:1081). Successor: list.set(ids) "
+        "(saas static_list.js:455) which applies x2ManyCommands.SET "
+        "and _onUpdate. Do not wrap a second mutex — set() already does."
+    ),
+}
+
 # Data xmlids that left the 19.0 module. view-xmlid only sees inherit_id.
 # Include tests: HttpCase setUpClass is where this first raised (20_9 Gx.7).
 GONE_XMLIDS = {
@@ -1174,9 +1227,15 @@ GONE_XMLIDS = {
 def check_gone_js_paths(module: str, rel: str, src: str) -> list[Finding]:
     out: list[Finding] = []
     for lineno, line in enumerate(src.splitlines(), 1):
+        stripped = line.lstrip()
+        if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("#"):
+            continue
         for path, hint in GONE_JS_PATHS.items():
             if path in line:
                 out.append(Finding("js-import", module, rel, lineno, f"{path} {hint}"))
+        for token, hint in GONE_JS_CALLS.items():
+            if token in line:
+                out.append(Finding("js-symbol", module, rel, lineno, f"{token} {hint}"))
     return out
 
 
@@ -1609,6 +1668,44 @@ def check_patch_shadow(module: str, rel: str, src: str, target: Target,
 
 
 INHERIT_REF_RE = re.compile(r'name="inherit_id"\s+ref="([\w.]+)"')
+CARD_ID_RE = re.compile(r"""card_id=["']%\(([\w.]+)\)d["']""")
+
+
+def _parent_arch_blob(target: Target, xids: list[str]) -> str:
+    """Inherited view record plus `card_id` / inherit_id chain (depth-capped)."""
+    seen: set[str] = set()
+    parts: list[str] = []
+
+    def add(xid: str, depth: int = 0) -> None:
+        if depth > 8 or xid in seen:
+            return
+        seen.add(xid)
+        rec = target.view_record_src(xid)
+        if not rec:
+            return
+        parts.append(rec)
+        for card in CARD_ID_RE.findall(rec):
+            add(card, depth + 1)
+        parent_mod = xid.split(".")[0] if "." in xid else ""
+        for href in INHERIT_REF_RE.findall(rec):
+            full = href if "." in href else (
+                f"{parent_mod}.{href}" if parent_mod else href
+            )
+            if "." in full:
+                add(full, depth + 1)
+
+    for xid in xids:
+        add(xid)
+    return "\n".join(parts)
+
+
+def _anchor_in_parent(blob: str, anchor: str) -> bool:
+    return (
+        f'name="{anchor}"' in blob
+        or f"name='{anchor}'" in blob
+        or f'id="{anchor}"' in blob
+        or f"id='{anchor}'" in blob
+    )
 
 
 def check_views(repo: str, module: str, target: Target, own_modules: set[str]) -> list[Finding]:
@@ -1693,15 +1790,28 @@ def check_view_anchors(repo: str, module: str, target: Target,
                            and r.split(".")[0] not in own_modules]
                 if not foreign:
                     continue
+                parent_blob = _parent_arch_blob(target, foreign)
                 for off, anchor in _view_anchors(block.group(0)):
-                    if anchor in known:
+                    if parent_blob:
+                        if _anchor_in_parent(parent_blob, anchor):
+                            continue
+                        hint = (
+                            f"anchor name/id={anchor!r} is absent from the inherited "
+                            f"view(+card_id) arch ({', '.join(foreign)}). A global "
+                            f"name hit is not enough — saas project.view_task_kanban "
+                            f"kept the xmlid but moved priority onto view_task_card."
+                        )
+                    elif anchor in known:
                         continue
+                    else:
+                        hint = (
+                            f"anchor name/id={anchor!r} exists in no view at the target ref "
+                            f"(inherits {', '.join(foreign)}). Read the target arch: the node was "
+                            f"renamed, merged away, or moved."
+                        )
                     lineno = src.count("\n", 0, block.start() + off) + 1
                     out.append(Finding(
-                        "view-anchor", module, rel, lineno,
-                        f"anchor name/id={anchor!r} exists in no view at the target ref "
-                        f"(inherits {', '.join(foreign)}). Read the target arch: the node was "
-                        f"renamed, merged away, or moved.",
+                        "view-anchor", module, rel, lineno, hint,
                     ))
     return out
 
@@ -1759,6 +1869,15 @@ _ACCESS_TRUE_DOMAIN_RE = re.compile(
 )
 
 
+# saas ir_access.py CRUD_SELECTION keys at pin 3630379f63633612e5a9e8d435deecbe26eaa15a.
+# Letters stay in crud order: 19.0 read+create is `cr`, not `rc` (20_10 Gx.6).
+ACCESS_OPERATIONS = frozenset({
+    "crud", "cru", "crd", "cud", "rud",
+    "cr", "cu", "cd", "ru", "rd", "ud",
+    "c", "r", "u", "d",
+})
+
+
 def _access_ops(operation: str) -> set[str]:
     return set(operation or "") & set("crud")
 
@@ -1803,6 +1922,7 @@ def _iter_ir_access_xml(src: str, rel: str):
             "id": attrs.get("id", ""),
             "model": _access_model_from_ref(model_ref),
             "group": group_ref,
+            "operation": operation,
             "ops": _access_ops(operation),
             "kind": _access_domain_kind(domain),
             "domain": domain,
@@ -1841,11 +1961,13 @@ def _iter_ir_access_csv(src: str, rel: str):
             continue
         group = cols[group_i].strip() if group_i is not None and group_i < len(cols) else ""
         domain = cols[domain_i].strip() if domain_i is not None and domain_i < len(cols) else ""
+        operation = cols[op_i].strip()
         yield {
             "id": cols[id_i].strip() if id_i is not None and id_i < len(cols) else "",
             "model": cols[model_i].strip(),
             "group": group,
-            "ops": _access_ops(cols[op_i].strip()),
+            "operation": operation,
+            "ops": _access_ops(operation),
             "kind": _access_domain_kind(domain),
             "domain": domain,
             "path": rel,
@@ -1884,6 +2006,34 @@ def _target_empty_permissions(target: "Target") -> dict[str, list[dict]]:
                 if row["group"] and row["kind"] == "empty" and row["model"]:
                     out[row["model"]].append(row)
     target._empty_permissions = out
+    return out
+
+
+def check_access_op(repo: str, module: str) -> list[Finding]:
+    """`ir.access.operation` must be a CRUD_SELECTION key (rule 22)."""
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml", ".csv"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/" in rel_posix:
+            continue
+        src = read(full)
+        rows: list[dict] = []
+        if rel_posix.endswith(".csv"):
+            if os.path.basename(rel_posix) != "ir.access.csv":
+                continue
+            rows = list(_iter_ir_access_csv(src, rel))
+        else:
+            rows = list(_iter_ir_access_xml(src, rel))
+        for row in rows:
+            op = row.get("operation") or ""
+            if op in ACCESS_OPERATIONS:
+                continue
+            out.append(Finding(
+                "access-op", module, row["path"], row["line"],
+                f"operation={op!r} is not a saas ir.access CRUD_SELECTION key "
+                f"(letters stay in crud order: read+create is cr, not rc). "
+                f"Valid: {', '.join(sorted(ACCESS_OPERATIONS, key=lambda s: (-len(s), s)))}.",
+            ))
     return out
 
 
@@ -2082,7 +2232,7 @@ def main() -> int:
                                    "(dead-hook,stale-override,js-import,js-symbol,"
                                    "owl-xpath,owl-tref,owl-this,owl-hook,python-api,patch-target,"
                                    "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
-                                   "access-or,access-grant,field-lit,manifest-version,calendar-attr,qweb-tesc)")
+                                   "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -2108,7 +2258,7 @@ def main() -> int:
         "dead-hook", "stale-override", "js-import", "js-symbol", "owl-xpath",
         "owl-tref", "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow",
         "view-xmlid", "view-anchor", "qweb-tcall", "security-model", "access-or",
-        "access-grant", "field-lit",
+        "access-grant", "access-op", "field-lit",
         "manifest-version", "calendar-attr", "qweb-tesc",
     }
 
@@ -2151,6 +2301,8 @@ def main() -> int:
             fs += check_access_or(args.repo, module, target)
         if "access-grant" in want:
             fs += check_access_grant(args.repo, module)
+        if "access-op" in want:
+            fs += check_access_op(args.repo, module)
         if "field-lit" in want:
             fs += check_field_literals(args.repo, module)
         if "manifest-version" in want:
@@ -2172,7 +2324,7 @@ def main() -> int:
         for kind in ("dead-hook", "js-import", "js-symbol", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
                      "view-anchor", "qweb-tcall", "qweb-tesc", "calendar-attr", "security-model",
-                     "access-or", "access-grant", "field-lit",
+                     "access-or", "access-grant", "access-op", "field-lit",
                      "manifest-version", "stale-override"):
             group = by_kind.get(kind)
             if not group:

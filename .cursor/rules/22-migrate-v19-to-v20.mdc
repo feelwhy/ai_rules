@@ -332,6 +332,30 @@ website = request.website
 website = request.env.website
 ```
 
+### `StaticList._replaceWith` is gone — use `list.set(ids)`
+
+19.0 `web` `StaticList._replaceWith(ids, { reload })` (`static_list.js:1081`)
+wrote a SET command and optionally `_loadRecords`. saas-19.4 deleted the
+method (zero `_replaceWith` in the tree). The public successor is
+`set(resIds)` (`:455`): `x2ManyCommands.SET` plus `_onUpdate`, and it
+already runs inside `model.mutex`.
+
+Observed `20_10` Gx.3: all four checklist field widgets
+(`task_checklist` / `crm_checklist` / `sale_order_checklist` /
+`purchase_order_checklist`) called `_replaceWith(..., { reload: true })`
+then `_onUpdate` inside a second mutex. Successor: `return this.list.set(currentIds)`.
+Do not wrap another mutex. Checker `js-symbol` greps `._replaceWith(`.
+
+```js
+// BEFORE
+return this.list.model.mutex.exec(async () => {
+    await this.list._replaceWith(currentIds, { reload: true });
+    await this.list._onUpdate();
+});
+// AFTER
+return this.list.set(currentIds);
+```
+
 ### `ir.config_parameter.get_param` / `set_param` are gone
 
 Both methods exist at 19.0 (`odoo/addons/base/models/ir_config_parameter.py`) and are **absent**
@@ -497,8 +521,11 @@ name comes from the **file stem**, so the file must be renamed, not just edited.
 
 - `domain_force` → **`domain`**.
 - `perm_read` / `perm_write` / `perm_create` / `perm_unlink` → one **`operation`** string, a subset
-  of `crud` in that order (`r`, `cu`, `ru`, `crud`, …). The `for_read` / `for_write` / `for_create` /
-  `for_unlink` booleans still exist as computed+inverse helpers, but data files set `operation`.
+  of `crud` **in that letter order**. Valid keys are `CRUD_SELECTION` (`r`, `cr`, `cu`, `ru`,
+  `crud`, …). `rc` is not a key — 19.0 read+create is `cr`. saas raises
+  `Value 'rc' not found in selection field 'Operation'` (`20_10` Gx.6). Checker `access-op`.
+  The `for_read` / `for_write` / `for_create` / `for_unlink` booleans still exist as
+  computed+inverse helpers, but data files set `operation`.
 - `groups` (many2many) → **`group_id`** (many2one). Several groups is now **several records**.
 - `model_id` still takes the `model_<name>` xmlid via `ref` (core does:
   `ref="project.model_project_task"`).
@@ -639,10 +666,13 @@ For every inherit of a core view, verify each anchor exists in the target arch:
 - a tag carrying `position=` — `<group name="lead_priority" position="inside">` or
   `<div id="portal_service_category" position="inside">`
 
-The checker's `view-anchor` kind does this mechanically (both `name` and `id`), and is a
-**signal in both directions**: it looks the token up across all target XML, so an anchor that
-moved to another model's view is a miss, and one built in Python rather than XML would be a
-false positive. Read the target arch before deleting an xpath.
+The checker's `view-anchor` kind does this mechanically (both `name` and `id`). When the
+`inherit_id` record can be loaded, the token is checked **on that view's arch plus its
+`card_id` / inherit chain**, not across every XML file. A surviving xmlid with a hollow
+`<kanban card_id="…">` is the `20_10` miss: `project.view_task_kanban` still exists,
+`priority` lives on `project.view_task_card`. Successor: inherit the card (or xpath a
+node that is actually on the parent). A global-only lookup stays the fallback when the
+parent record cannot be loaded. Read the target arch before deleting an xpath.
 
 When the anchor is genuinely gone, prefer dropping the redundant hook over inventing a new one —
 here the surviving `<field name="tag_ids" position="before">` already placed the widget, so the
@@ -1030,7 +1060,7 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `dead-hook` | the hook existed at the **base** ref and is gone at the target — a silent break. Also `_check_access`: the name survives but `check_access` is `@typing.final` (`DEAD_DESPITE_EXISTING`) |
 | `stale-override` | absent at **both** refs — already dead before this port; a defect on the current serie, not porting work |
 | `js-import` | an `@mod/path` import resolving to no file in `odoo` or `enterprise`, or a `loadJS` URL deleted at the target (`/web/static/lib/jquery/jquery.js`) |
-| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid |
+| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`) |
 | `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
 | `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`), a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`) |
@@ -1042,10 +1072,11 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `patch-target` | a `patch()` whose imported target no longer resolves |
 | `patch-shadow` | a `patch(X.prototype, …)` member that upstream declares as a **class field** on the patched class or an ancestor — an own instance property shadows it, so it never runs, on any serie |
 | `view-xmlid` | an `inherit_id` ref to a core view that no longer exists, **or** a leftover `website.default_website` (tests included — successor `base.default_website`) |
-| `view-anchor` | an inherit anchor (`@name=` / `@id=` predicate, or a `position=` tag's `name` / `id`) that exists in no target view — a signal, see the caveat above |
+| `view-anchor` | an inherit anchor (`@name=` / `@id=` predicate, or a `position=` tag's `name` / `id`) absent from the **inherited** view arch (plus `card_id` / inherit chain). Global name-set is only the fallback when that record cannot be loaded. saas `project.view_task_kanban` kept the xmlid; `priority` moved to `view_task_card` |
 | `security-model` | a data file declaring `ir.rule` / `ir.model.access`, gone at the target; CSV findings mean **rename the file** |
 | `access-or` | a grouped `ir.access` with an **empty** domain on a model that also has a grouped row with a real domain and overlapping ops — empty is `Domain.TRUE` and ORs the filter away. Explicit `[(1, '=', 1)]` is not this kind. Restrictions (no `group_id`) AND and are safe. Also a **core/enterprise** empty permission on a model this module domains, unless the module ANDs via `_access_domain` |
 | `access-grant` | a `base.group_user` permission with write ops (`c`/`u`/`d`) on a model that also has a product-group permission — 19.0 `ir.rule` on Internal User was a filter, not an ACL grant |
+| `access-op` | `ir.access.operation` is not a `CRUD_SELECTION` key. Letters stay in `crud` order (`cr` not `rc`). saas rejects the CSV (`Value 'rc' not found`) |
 | `field-lit` | a literal use of a removed field name |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
 
@@ -1146,8 +1177,21 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
   module adds becomes a finding. It also does not see OWL `t-inherit` XPath on `@t-ref` —
   that is `owl-xpath`.
 - **The target node-name set rides on the existing XML walk.** `view_xmlids()` already `git show`s
-  every XML file in both trees, so the anchor lookup is a set membership, not one `git grep` per
+  every XML file in both trees, so the fallback lookup is a set membership, not one `git grep` per
   anchor (553 `position=` tags in `tools` would otherwise mean 553 greps).
+- **A surviving parent xmlid is not a surviving field node.** saas
+  `project.view_task_kanban` is a `card_id` shell (`project_task_views.xml:752`
+  at pin `3630379f63633612e5a9e8d435deecbe26eaa15a`). `priority` / `footer`
+  live on `project.view_task_card`. A global `name=` set reported clean.
+  `view-anchor` now binds to the inherited record plus `card_id` / inherit
+  chain. Unqualified `inherit_id` (`ref="sale_order_tree"`) must take the
+  parent module prefix or `sale.view_order_tree` looks empty (`state` is
+  on `sale.sale_order_tree`). Successor: inherit `view_task_card`.
+  Observed `20_10` Gx.6 (`Element '<field name="priority">' cannot be located`).
+- *(2026-09-16, `20_10` Gx.6)* Sale/purchase history ACL `operation=rc`
+  died (`Value 'rc' not found in selection field 'Operation'`). 19.0 was
+  read+create (`perm_read`+`perm_create`). Successor: `cr`. Checker
+  `access-op` against saas `CRUD_SELECTION`.
 - **An empty grouped `ir.access` domain is not the 19.0 ACL.** saas
   `Domain.OR(permissions)` treats empty as `Domain.TRUE` (`ir_access.py:308`,
   `:355`). A one-to-one ACL+rule port leaves the rule in the file and never
@@ -1426,3 +1470,14 @@ without evidence does not belong in this rule.
   Typo jsonrpc tests then died `AttributeError` on every method even with
   `website=True`. Successor on typo / short_urls / transliterations.
   Checker `python-api`.
+- *(2026-09-16, `20_10` Gx.3)* `StaticList._replaceWith` is gone at
+  saas-19.4 (present 19.0 `static_list.js:1081`). Four checklist field
+  widgets would silently fail to write the SET command. Successor
+  `list.set(ids)` (`:455`). Checker `js-symbol` greps `._replaceWith(`.
+  Already-ported groups have no leftover.
+- *(2026-09-16, `20_10` Gx.6)* `task_checklist` inherit of
+  `project.view_task_kanban` died
+  (`Element '<field name="priority">' cannot be located`). saas kanban is
+  `<kanban card_id="%(project.view_task_card)d">`; `priority` is on the
+  card. Successor: inherit `project.view_task_card`. Checker `view-anchor`
+  now binds to the inherited arch + `card_id` (global name-set hid this).
