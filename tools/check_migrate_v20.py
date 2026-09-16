@@ -19,7 +19,9 @@ phase-1 analysis proved are findable statically:
                     module domains, unless the module ANDs via _access_domain
   access-grant      a base.group_user permission with write ops on a model
                that also has a product-group permission — 19.0 ir.rule
-               on Internal User was a filter, not an ACL grant (rule 22)
+               on Internal User was a filter, not an ACL grant (rule 22).
+               Quiet when origin/19.0 ir.model.access already granted
+               Internal User write on that model (20_4 portal vaults)
   access-op         ir.access.operation is not a CRUD_SELECTION key
                (letters stay in crud order: cr not rc)
   js-symbol         a named import whose file still exists but the export does not
@@ -43,6 +45,7 @@ phase-1 analysis proved are findable statically:
   owl-hook          useEffect(fn, deps) from @odoo/owl — OWL 3 ignores the deps array
   python-api        a call to a core method gone at the target
                     (get_param / set_param / Registry.clear_cache /
+                    leftover _order_field_to_sql(..., query);
                     Store.get_result)
                     or a leftover tools.ormcache (use odoo.api.ormcache)
                     or a named import that left odoo.http
@@ -98,6 +101,12 @@ REMOVED_FIELD_LITERALS = {
     "product_uom": "stock.move.product_uom renamed uom_id. NOTE: sale.order.line / "
                    "product.supplierinfo legitimately use product_uom_id - check the model.",
 }
+# saas-19.4 export_data still returns {"datas": matrix} (orm/models.py).
+# That key is not ir.attachment.datas. 20_4 password_key.export_data.
+EXPORT_DATAS_RE = re.compile(
+    r"""export_data|result\.get\(["']datas["']\)|result\.update\(\{\s*["']datas["']"""
+    r"""|return \{\s*["']datas["']"""
+)
 
 # Security models unified into `ir.access` (rule 22). Keyed by the model name a data
 # file declares, which is also the CSV file stem. Reported only when the old model is
@@ -223,8 +232,11 @@ OWL_BARE_CALL_RE = re.compile(
 # Getters and methods used as a bare ident: t-att-class="panelClass",
 # t-on-click="clear". Arrow / this. values are excluded.
 OWL_BARE_ATTR_IDENT_RE = re.compile(
-    r"""\b(?:t-att-class|t-att-style|t-on-click(?:\.\w+)?)=["'](?!this\.|[\(\[])([A-Za-z_]\w*)["']"""
+    r"""\b(?:t-att-class|t-att-style|t-out|t-esc|t-on-click(?:\.\w+)?)=["'](?!this\.|[\(\[])([A-Za-z_]\w*)["']"""
 )
+# t-attf-id="jstr_input_#{id}" — OWL 3 interpolation is this.id
+# (20_4 pwm_jstree_container; search input vs onMounted getElementById).
+OWL_BARE_INTERP_RE = re.compile(r"#\{(?!this\.)([A-Za-z_]\w*)\}")
 # update.bind="handleChange" → TypeError: Cannot read properties of
 # undefined (reading 'bind'). 20_14 already wrote this.handleChange.
 OWL_BARE_BIND_RE = re.compile(
@@ -1375,6 +1387,14 @@ def _owl_this_extra_findings(src: str, rel: str, module: str, off: int, body: st
             f"Successor: (event) => this.{am.group(1)}(...) "
             f"(Invalid handler expression; 20_5 KPI formula).",
         ))
+    for im in OWL_BARE_INTERP_RE.finditer(body):
+        lineno = src.count("\n", 0, off) + body[:im.start()].count("\n") + 1
+        out.append(Finding(
+            "owl-this", module, rel, lineno,
+            f"{where} template interpolates #{{{im.group(1)}}} without this. "
+            f"Successor: #{{this.{im.group(1)}}} "
+            f"(20_4 pwm_jstree_container search id).",
+        ))
     return out
 
 
@@ -1546,6 +1566,14 @@ def _http_import_names(clause: str) -> list[str]:
 
 TOOLS_ORMCACHE_RE = re.compile(r"tools\.ormcache\s*\(")
 REQUEST_WEBSITE_RE = re.compile(r"request\.website\b")
+# 19.0 _order_field_to_sql(..., query); saas-19.4 dropped query (20_4 Gx.6).
+ORDER_FIELD_QUERY_DEF_RE = re.compile(
+    r"def\s+_order_field_to_sql\s*\([^)]*\bquery\b"
+)
+# 19.0 _order_to_sql(order, query); saas is _order_to_sql(table, order).
+ORDER_TO_SQL_STRING_FIRST_RE = re.compile(
+    r"""_order_to_sql\s*\(\s*(['"][^'"]+['"]|\border\b)\s*,"""
+)
 CALENDAR_DATE_DELAY_RE = re.compile(
     r"<calendar\b[^>]*\bdate_delay\s*=",
     re.IGNORECASE,
@@ -1616,6 +1644,22 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                     "(ir_http no longer assigns request.website). Observed 20_9 "
                     "Gx.7 AttributeError on jsonrpc website=True routes.",
                 ))
+            if ORDER_FIELD_QUERY_DEF_RE.search(line):
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "_order_field_to_sql(..., query): saas-19.4 dropped query "
+                    "(odoo/orm/models.py:4651). Successor is "
+                    "(table, field_expr, direction, nulls); use table.<field> "
+                    "like mailing / documents. Observed 20_4 Gx.6 TypeError "
+                    "during account security load.",
+                ))
+            if ORDER_TO_SQL_STRING_FIRST_RE.search(line):
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "_order_to_sql(order, query) is the 19.0 call; saas-19.4 "
+                    "is _order_to_sql(table, order). Get table from "
+                    "_as_query().table or _search(...).table.",
+                ))
         for m in HTTP_FROM_RE.finditer(src):
             lineno = src.count("\n", 0, m.start()) + 1
             for name in _http_import_names(m.group(1)):
@@ -1672,7 +1716,14 @@ CARD_ID_RE = re.compile(r"""card_id=["']%\(([\w.]+)\)d["']""")
 
 
 def _parent_arch_blob(target: Target, xids: list[str]) -> str:
-    """Inherited view record plus `card_id` / inherit_id chain (depth-capped)."""
+    """Inherited view record plus inherit_id chain (depth-capped).
+
+    Do **not** walk ``card_id``. Odoo applies the inherit xpath to the parent
+    arch only; a hollow ``<kanban card_id="%(….view_task_card)d">`` does not
+    expose the card's ``name`` / ``priority``. Walking the card hid
+    ``task_numbers`` (`20_4` Gx.6) after `20_10` already had to retarget
+    ``view_task_card``.
+    """
     seen: set[str] = set()
     parts: list[str] = []
 
@@ -1684,8 +1735,6 @@ def _parent_arch_blob(target: Target, xids: list[str]) -> str:
         if not rec:
             return
         parts.append(rec)
-        for card in CARD_ID_RE.findall(rec):
-            add(card, depth + 1)
         parent_mod = xid.split(".")[0] if "." in xid else ""
         for href in INHERIT_REF_RE.findall(rec):
             full = href if "." in href else (
@@ -1697,6 +1746,21 @@ def _parent_arch_blob(target: Target, xids: list[str]) -> str:
     for xid in xids:
         add(xid)
     return "\n".join(parts)
+
+
+def _card_ids_for(target: Target, xids: list[str]) -> list[str]:
+    cards: list[str] = []
+    for xid in xids:
+        rec = target.view_record_src(xid)
+        if not rec:
+            continue
+        parent_mod = xid.split(".")[0] if "." in xid else ""
+        for card in CARD_ID_RE.findall(rec):
+            full = card if "." in card else (
+                f"{parent_mod}.{card}" if parent_mod else card
+            )
+            cards.append(full)
+    return cards
 
 
 def _anchor_in_parent(blob: str, anchor: str) -> bool:
@@ -1791,16 +1855,27 @@ def check_view_anchors(repo: str, module: str, target: Target,
                 if not foreign:
                     continue
                 parent_blob = _parent_arch_blob(target, foreign)
+                card_ids = _card_ids_for(target, foreign)
+                card_blob = _parent_arch_blob(target, card_ids) if card_ids else ""
                 for off, anchor in _view_anchors(block.group(0)):
                     if parent_blob:
                         if _anchor_in_parent(parent_blob, anchor):
                             continue
-                        hint = (
-                            f"anchor name/id={anchor!r} is absent from the inherited "
-                            f"view(+card_id) arch ({', '.join(foreign)}). A global "
-                            f"name hit is not enough — saas project.view_task_kanban "
-                            f"kept the xmlid but moved priority onto view_task_card."
-                        )
+                        if card_blob and _anchor_in_parent(card_blob, anchor):
+                            hint = (
+                                f"anchor name/id={anchor!r} is on the card "
+                                f"({', '.join(card_ids)}), not on the inherited "
+                                f"kanban shell ({', '.join(foreign)}). Odoo does "
+                                f"not apply xpath to card_id — inherit the card "
+                                f"(20_10 view_task_card; 20_4 task_numbers)."
+                            )
+                        else:
+                            hint = (
+                                f"anchor name/id={anchor!r} is absent from the inherited "
+                                f"view arch ({', '.join(foreign)}). A global "
+                                f"name hit is not enough — saas project.view_task_kanban "
+                                f"kept the xmlid but moved priority onto view_task_card."
+                            )
                     elif anchor in known:
                         continue
                     else:
@@ -2108,6 +2183,53 @@ def _is_internal_user_group(group: str) -> bool:
     return group == "base.group_user" or group.endswith(".base.group_user")
 
 
+def _acl_xmlid_to_model(token: str) -> str:
+    """19.0 `model_portal_password_key` / `mod.model_x` → `portal.password.key`."""
+    name = token.split(".")[-1]
+    if name.startswith("model_"):
+        name = name[len("model_"):]
+    return name.replace("_", ".")
+
+
+@lru_cache(maxsize=128)
+def _nineteen_group_user_writes(repo: str, module: str) -> frozenset[str]:
+    """Models where 19.0 ir.model.access already granted Internal User write.
+
+    access-grant is the KPI hole (a grouped *rule* ported as a write ACL).
+    Password portal vaults already shipped group_user crud on 19.0 — keep it.
+    """
+    src = None
+    for ref in ("origin/19.0", "19.0"):
+        out = subprocess.run(
+            ["git", "-C", repo, "show", f"{ref}:{module}/security/ir.model.access.csv"],
+            capture_output=True, text=True,
+        )
+        if out.returncode == 0:
+            src = out.stdout
+            break
+    if not src:
+        return frozenset()
+    models: set[str] = set()
+    for line in src.splitlines()[1:]:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 8:
+            continue
+        model_tok, group = parts[2], parts[3]
+        try:
+            _r, w, c, u = (int(parts[i] or 0) for i in (4, 5, 6, 7))
+        except ValueError:
+            continue
+        if not (w or c or u):
+            continue
+        if not _is_internal_user_group(group):
+            continue
+        models.add(_acl_xmlid_to_model(model_tok))
+    return frozenset(models)
+
+
 def check_access_grant(repo: str, module: str) -> list[Finding]:
     """base.group_user write + product-group ACL is a 19.0 rule grant (rule 22)."""
     rows: list[dict] = []
@@ -2128,6 +2250,7 @@ def check_access_grant(repo: str, module: str) -> list[Finding]:
         if row["model"] and row["group"]:
             by_model[row["model"]].append(row)
 
+    prior = _nineteen_group_user_writes(repo, module)
     out: list[Finding] = []
     for model, items in sorted(by_model.items()):
         product = [item for item in items if not _is_internal_user_group(item["group"])]
@@ -2137,6 +2260,8 @@ def check_access_grant(repo: str, module: str) -> list[Finding]:
             if not _is_internal_user_group(row["group"]):
                 continue
             if not (row["ops"] & set("cud")):
+                continue
+            if model in prior:
                 continue
             sibling = product[0]
             out.append(Finding(
@@ -2210,6 +2335,8 @@ def check_field_literals(repo: str, module: str) -> list[Finding]:
             continue
         for lineno, line in enumerate(read(full).splitlines(), 1):
             for name, why in REMOVED_FIELD_LITERALS.items():
+                if name == "datas" and EXPORT_DATAS_RE.search(line):
+                    continue
                 if pats[name].search(line) or attr[name].search(line):
                     out.append(Finding("field-lit", module, rel, lineno,
                                        f"{name!r}: {why}"))

@@ -1371,32 +1371,32 @@ belongs on the current serie and ports over unchanged.
 
 | Removed hook | Successor |
 |---|---|
-| `_generate_order_by(order_spec, query)` | `_order_field_to_sql(alias, field_name, direction, nulls, query)` |
+| `_generate_order_by(order_spec, query)` | 19.0: `_order_field_to_sql(alias, field_name, direction, nulls, query)`. saas-19.4 **dropped `query`**: `_order_field_to_sql(table, field_expr, direction, nulls)` (`odoo/orm/models.py:4651`). `_order_to_sql` is `_order_to_sql(table, order)` |
 | `_generate_order_by_inner(alias, order_spec, query, …)` | same |
-| `_inherits_join_calc(alias, fname, query)` | `_field_to_sql(alias, field_expr, query)`, normally reached through the hook above |
+| `_inherits_join_calc(alias, fname, query)` | `_field_to_sql(alias, field_expr, query)` still exists (query optional) |
 
-`_order_field_to_sql` (`odoo/orm/models.py:5262`) is the per-field hook `_order_to_sql` calls, and it
-is what core itself overrides for this (`stock_picking.py:240`, `project_project.py:725`,
-`res_device.py:65`). Build the term from `self._field_to_sql(...)` rather than a hand-written column
-reference: that keeps core's read-access check and, for a translated field, core's
-`COALESCE(col->>'<lang>', col->>'en_US')` fallback chain.
+The 19.0 lowercase hook does **not** port unchanged. Copying it onto saas raises
+`TypeError: …_order_field_to_sql() missing 1 required positional argument: 'query'`
+as soon as anything searches the model (observed `20_4` Gx.6 while loading
+`account` groups). Successor matches core `mailing` / `documents`:
 
 ```python
-# BEFORE (dead since before 19.0) — string surgery on the whole ORDER BY clause
-def _generate_order_by(self, order_spec, query):
-    res = super()._generate_order_by(order_spec=order_spec, query=query)
-    return res.replace('"my_table"."name"', 'LOWER("my_table"."name")')
-
-# AFTER — one term, translation-aware, access-checked
-def _order_field_to_sql(self, alias, field_name, direction, nulls, query):
-    if field_name == "name":
-        return SQL("LOWER(%s) %s %s", self._field_to_sql(alias, field_name, query), direction, nulls)
-    return super()._order_field_to_sql(alias, field_name, direction, nulls, query)
+# saas-19.4 — table is TableSQL; append group-by like mailing.state
+def _order_field_to_sql(self, table, field_expr, direction, nulls):
+    if field_expr == "name":
+        sql_field = table.name
+        table._query._order_groupby.append(sql_field)
+        return SQL("LOWER(%s) %s %s", sql_field, direction, nulls)
+    return super()._order_field_to_sql(table, field_expr, direction, nulls)
 ```
 
-Note the return type: `_order_to_sql` composes `SQL` objects, so `str.replace` on the result is not
-available even if the old hook still existed. Fixed on 19.0 in `knowsystem` and
-`odoo_password_manager` (2026-09-12).
+Tests that called `_order_to_sql(order, records._as_query(...)).code` become
+`_order_to_sql(query.table, order)._sql_tuple[0]` (saas `LiteralSQL` has no
+`.code`). Checker `python-api` flags a leftover `query` on the def and a
+string-first `_order_to_sql(`.
+
+19.0 still uses the five-arg form (`knowsystem`, `odoo_password_manager`,
+2026-09-12). Do not change 19.0.
 
 **Assert the emitted SQL, not the row order.** A "mixed-case rows come back sorted" check cannot
 tell a working lowercase hook from a dead one on our databases: they are created with `en_US.utf8`
@@ -1850,6 +1850,12 @@ Successor:
 3. Keep 19.0 global rules as restrictions (no `group_id`).
 4. Do not leave a `base.group_user` write permission on a model that
    also has a product-group ACL — that is the grant.
+5. **Exception:** 19.0 `ir.model.access` already granted Internal User
+   write on that model. Keep the ACL row and put the 19.0 *rule* domain
+   on it. Observed `20_4` `portal.password.key` /
+   `portal.password.bundle` (`group_user` crud + vaults group `r`).
+   Checker `access-grant` stays quiet when `origin/19.0`
+   `ir.model.access.csv` already had that write.
 
 Checker kind `access-grant`.
 
@@ -2284,19 +2290,19 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`) |
 | `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
-| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`), a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`) |
+| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`) |
 | `qweb-tcall` | first-child `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` on a `t-call` — saas-19.4 slot only |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), or a named import that left `odoo.http` (`Stream` / `content_disposition`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), or a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`) |
 | `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
 | `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
 | `patch-shadow` | a `patch(X.prototype, …)` member that upstream declares as a **class field** on the patched class or an ancestor — an own instance property shadows it, so it never runs, on any serie |
 | `view-xmlid` | an `inherit_id` ref to a core view that no longer exists, **or** a leftover `website.default_website` (tests included — successor `base.default_website`) |
-| `view-anchor` | an inherit anchor (`@name=` / `@id=` predicate, or a `position=` tag's `name` / `id`) absent from the **inherited** view arch (plus `card_id` / inherit chain). Global name-set is only the fallback when that record cannot be loaded. saas `project.view_task_kanban` kept the xmlid; `priority` moved to `view_task_card` |
+| `view-anchor` | an inherit anchor (`@name=` / `@id=` predicate, or a `position=` tag's `name` / `id`) absent from the **inherited** view arch (plus `inherit_id` chain, **not** `card_id` — Odoo does not apply xpath to the card). Global name-set is only the fallback when that record cannot be loaded. A hollow `view_task_kanban` / sharing kanban plus an anchor that lives only on the card is a finding (`20_10`, `20_4`) |
 | `security-model` | a data file declaring `ir.rule` / `ir.model.access`, gone at the target; CSV findings mean **rename the file** |
 | `access-or` | a grouped `ir.access` with an **empty** domain on a model that also has a grouped row with a real domain and overlapping ops — empty is `Domain.TRUE` and ORs the filter away. Explicit `[(1, '=', 1)]` is not this kind. Restrictions (no `group_id`) AND and are safe. Also a **core/enterprise** empty permission on a model this module domains, unless the module ANDs via `_access_domain` |
-| `access-grant` | a `base.group_user` permission with write ops (`c`/`u`/`d`) on a model that also has a product-group permission — 19.0 `ir.rule` on Internal User was a filter, not an ACL grant |
+| `access-grant` | a `base.group_user` permission with write ops (`c`/`u`/`d`) on a model that also has a product-group permission — 19.0 `ir.rule` on Internal User was a filter, not an ACL grant. Quiet when 19.0 `ir.model.access` already granted that write (`20_4` portal vaults) |
 | `access-op` | `ir.access.operation` is not a `CRUD_SELECTION` key. Letters stay in `crud` order (`cr` not `rc`). saas rejects the CSV (`Value 'rc' not found`) |
 | `field-lit` | a literal use of a removed field name |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
@@ -2404,11 +2410,13 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
   `project.view_task_kanban` is a `card_id` shell (`project_task_views.xml:752`
   at pin `3630379f63633612e5a9e8d435deecbe26eaa15a`). `priority` / `footer`
   live on `project.view_task_card`. A global `name=` set reported clean.
-  `view-anchor` now binds to the inherited record plus `card_id` / inherit
-  chain. Unqualified `inherit_id` (`ref="sale_order_tree"`) must take the
-  parent module prefix or `sale.view_order_tree` looks empty (`state` is
-  on `sale.sale_order_tree`). Successor: inherit `view_task_card`.
-  Observed `20_10` Gx.6 (`Element '<field name="priority">' cannot be located`).
+  `view-anchor` binds to the inherited record plus the `inherit_id` chain,
+  **not** `card_id` (Odoo applies xpath to the parent only; walking the
+  card hid `20_4` `task_numbers`). Unqualified `inherit_id`
+  (`ref="sale_order_tree"`) must take the parent module prefix or
+  `sale.view_order_tree` looks empty (`state` is on `sale.sale_order_tree`).
+  Successor: inherit `view_task_card` (and the sharing card). Observed
+  `20_10` Gx.6 and `20_4` Gx.6.
 - *(2026-09-16, `20_10` Gx.6)* Sale/purchase history ACL `operation=rc`
   died (`Value 'rc' not found in selection field 'Operation'`). 19.0 was
   read+create (`perm_read`+`perm_create`). Successor: `cr`. Checker
@@ -2702,6 +2710,49 @@ without evidence does not belong in this rule.
   `<kanban card_id="%(project.view_task_card)d">`; `priority` is on the
   card. Successor: inherit `project.view_task_card`. Checker `view-anchor`
   now binds to the inherited arch + `card_id` (global name-set hid this).
+- *(2026-09-16, `20_4` Gx.3)* `password_key.export_data` still reads
+  `result["datas"]`. saas-19.4 `BaseModel.export_data` returns
+  `{'datas': self._export_rows(...)}` (`odoo/orm/models.py:932` at pin
+  `3630379f63633612e5a9e8d435deecbe26eaa15a`). That key is not
+  `ir.attachment.datas`. Leave it. Checker `field-lit` skips a `datas`
+  literal on an `export_data` / `result.get("datas")` line.
+- *(2026-09-16, `20_4` Gx.3)* `access-grant` flagged
+  `access_portal_password_key` / `_bundle` (`base.group_user` crud next
+  to the vaults-group `r` row). 19.0 ACL already granted Internal User
+  crud on those models; the grouped `ir.rule` was only a filter.
+  Successor: keep `group_user` crud + the 19.0 **internal** bundle
+  domain. Put the 19.0 **portal** partner domain on `base.group_portal`
+  (the 19.0 rule group), not on `group_portal_password_vaults`.
+  Internals receive that vaults group when Portal vaults is on; saas
+  `Domain.OR(permissions)` then unions the partner filter with the
+  bundle filter. Controller / menu still gate the vaults group.
+  Checker reads `origin/19.0` `ir.model.access.csv` and stays quiet
+  when that Internal User write already existed.
+- *(2026-09-16, `20_4` Gx.6)* 19.0 `_order_field_to_sql(..., query)` died
+  at install (`TypeError: missing … query`) while loading
+  `account.group_account_readonly`. saas-19.4
+  `odoo/orm/models.py:4651` dropped `query`; `_order_to_sql` is
+  `(table, order)`. Successor: `(table, field_expr, direction, nulls)`
+  and `table.name` like `mailing`. Tests:
+  `_order_to_sql(query.table, order)`. Checker `python-api`. Only
+  `odoo_password_manager` had the leftover; `knowsystem` is not on
+  `_port` yet.
+- *(2026-09-16, `20_4` Gx.6)* `task_numbers` inherit of
+  `project.view_task_kanban` died
+  (`Element '<xpath expr="//main/field[@name='name']">' cannot be
+  located`). Same `card_id` shell as `20_10`. Sharing kanban is also a
+  shell (`project_sharing_project_task_view_card`). Walking `card_id` in
+  `view-anchor` hid this — Odoo applies xpath to the parent only.
+  Successor: inherit the card. Checker no longer walks `card_id`; an
+  anchor that lives only on the card is a finding.
+- *(2026-09-16, `20_4` B1)* Partner-domain portal ACL on
+  `group_portal_password_vaults` ORed with the internal bundle row.
+  19.0 `portal_password_*_read_rule_portal` used
+  `groups=base.group_portal`. Successor: `base.group_portal` + `r`.
+- *(2026-09-16, `20_4` B1)* `pwm_jstree_container` still had
+  `t-out="title"` and `#{id}`. OWL 3 compile scope is `this`.
+  Checker `owl-this` now flags bare `t-out` / `t-esc` idents and
+  `#{name}` interpolations.
 
 ## 30-command-vocabulary
 
