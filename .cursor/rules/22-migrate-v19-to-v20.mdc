@@ -312,6 +312,26 @@ from odoo.http.stream import Stream, content_disposition
 
 Keep `from odoo.http import request` / `Controller` / `route`. Do not "fix" those.
 
+### `request.website` is gone — use `request.env.website`
+
+19.0 `website.ir.http` assigned `request.website = website.with_context(...)`.
+saas-19.4 deleted that assignment. The current website is
+`request.env.website` (also `self.env.website` on a Controller). `website=True`
+on the route still puts `website_id` in the context.
+
+Observed `20_9` Gx.7: every `odoo_typo_reporter` jsonrpc test died
+`AttributeError: 'Request' object has no attribute 'website'` despite
+`website=True`. Same leftover on `short_urls` and `website_url_translations`.
+Successor: `request.env.website`. Checker `python-api` greps `request.website`
+(does not match `request.env.website`).
+
+```python
+# BEFORE
+website = request.website
+# AFTER
+website = request.env.website
+```
+
 ### `ir.config_parameter.get_param` / `set_param` are gone
 
 Both methods exist at 19.0 (`odoo/addons/base/models/ir_config_parameter.py`) and are **absent**
@@ -694,6 +714,18 @@ first `t-call`) and the slot later set the flag for `portal.portal_searchbar`
 Checker kind `qweb-tcall` flags a first-child `t-set` of `breadcrumbs_searchbar`
 / `object` / `token` / `title`. Observed `20_14` Gx.8 token share.
 
+### `website.default_website` moved to `base.default_website`
+
+19.0 `addons/website/data/website_data.xml` shipped `<record id="default_website">`.
+saas-19.4 deleted that node. The row is `base.default_website`
+(`odoo/addons/base/data/website.xml`); `website._ensure_default_website_consistency`
+keeps the xmlid on the first website. Core now does
+`self.env.ref('base.default_website')`. A leftover `website.default_website`
+raises `ValueError: External ID not found` — observed `20_9` Gx.7
+`TestTypoReporterController.setUpClass`. Successor: retarget every
+`env.ref` / XML `ref`. Checker `view-xmlid` greps the old token, including
+tests. `field-lit` does not (it skips `/tests/`).
+
 ### `product.product_variant_easy_edit_view` removed
 
 Present through `saas-19.3`, absent in `saas-19.4`. Any `inherit_id` pointing at it fails to load.
@@ -1004,12 +1036,12 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`), a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`) |
 | `qweb-tcall` | first-child `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` on a `t-call` — saas-19.4 slot only |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), or a named import that left `odoo.http` (`Stream` / `content_disposition`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), or a named import that left `odoo.http` (`Stream` / `content_disposition`) |
 | `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
 | `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
 | `patch-shadow` | a `patch(X.prototype, …)` member that upstream declares as a **class field** on the patched class or an ancestor — an own instance property shadows it, so it never runs, on any serie |
-| `view-xmlid` | an `inherit_id` ref to a core view that no longer exists |
+| `view-xmlid` | an `inherit_id` ref to a core view that no longer exists, **or** a leftover `website.default_website` (tests included — successor `base.default_website`) |
 | `view-anchor` | an inherit anchor (`@name=` / `@id=` predicate, or a `position=` tag's `name` / `id`) that exists in no target view — a signal, see the caveat above |
 | `security-model` | a data file declaring `ir.rule` / `ir.model.access`, gone at the target; CSV findings mean **rename the file** |
 | `access-or` | a grouped `ir.access` with an **empty** domain on a model that also has a grouped row with a real domain and overlapping ops — empty is `Domain.TRUE` and ORs the filter away. Explicit `[(1, '=', 1)]` is not this kind. Restrictions (no `group_id`) AND and are safe. Also a **core/enterprise** empty permission on a model this module domains, unless the module ANDs via `_access_domain` |
@@ -1064,6 +1096,11 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
 - **`@odoo/owl` is a loader alias, not a reason to skip the file.** Path existence is always
   true. Named exports must be checked against `owl.d.ts` plus the compat layer's `owl.X =`
   assignments. Skipping the alias hid `useState` from every module that imports it.
+- **A QWeb `<template id>` is an xmlid.** `view-xmlid` collected only
+  `<record id>`. saas `website.snippets` is
+  `<template id="snippets">` (`addons/website/views/snippets/snippets.xml:5`
+  at pin `3630379f63633612e5a9e8d435deecbe26eaa15a`). `20_9` `short_urls`
+  inherit then looked dead. Index `<template id>` the same way as records.
 - **A surviving JS file is not a surviving export.** `js-import` asks whether `@mod/path`
   resolves. `Deferred` left `concurrency.js` in place and still broke 158 core call sites.
   `js-symbol` reads the named import against that file's `export` list.
@@ -1369,3 +1406,23 @@ without evidence does not belong in this rule.
   and `env.su`. Do not hard-depend `sale_stock` just to inherit that xmlid.
   Checker `access-or` now scans core/enterprise empty permissions on models
   this module domains, and stays quiet when `_access_domain` is defined.
+- *(2026-09-16, `20_9` Gx.3)* `view-xmlid` reported `website.snippets` gone.
+  The template is still there; the checker only indexed `<record id>`.
+  Successor: index `<template id>` too. `short_urls` keep the inherit; add
+  `group="content"` next to saas inner snippets. `website_url_translations`
+  `_onLangChangeClick` `.include()` of `website_root` becomes a `patch` of
+  `LangChange` (`@website/interactions/lang_change`). `type_person` search
+  filter is gone — hook `inactive`. Typo-report JSON `datas` is not an
+  ORM field but `field-lit` still flags it; the wire key is `raw`.
+- *(2026-09-16, `20_9` Gx.7)* `website.default_website` is gone. saas
+  ships `base.default_website` (`odoo/addons/base/data/website.xml`) and
+  `website._ensure_default_website_consistency`. Typo HttpCase
+  `setUpClass` died (`ValueError: External ID not found`). Successor:
+  `env.ref("base.default_website")`. Checker `view-xmlid` now greps the
+  old xmlid in `.py` / `.xml` / `.js` **including tests** (`field-lit`
+  skips `/tests/`).
+- *(2026-09-16, `20_9` Gx.7)* `request.website` is gone. saas website
+  `ir.http` no longer assigns it; current site is `request.env.website`.
+  Typo jsonrpc tests then died `AttributeError` on every method even with
+  `website=True`. Successor on typo / short_urls / transliterations.
+  Checker `python-api`.

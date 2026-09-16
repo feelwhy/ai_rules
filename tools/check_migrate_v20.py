@@ -493,7 +493,7 @@ class Target:
     # ---- view xmlids -----------------------------------------------------
     @lru_cache(maxsize=1)
     def _xml_index(self) -> tuple[set[str], set[str]]:
-        """(record xmlids, every `name="..."` value) over all target XML.
+        """(record + QWeb `<template id>` xmlids, every `name="..."` value) over all target XML.
 
         One pass for both: `tree.show` is cached, but the walk itself is the expensive
         part, so the node-name set rides along instead of grepping per anchor.
@@ -501,6 +501,9 @@ class Target:
         ids: set[str] = set()
         node_names: set[str] = set()
         rec = re.compile(r'<record[^>]*\bid="([a-zA-Z0-9_.]+)"')
+        # QWeb <template id="snippets"> is ir.ui.view xmlid website.snippets.
+        # A record-only scan reported website.snippets gone at saas-19.4 (20_9).
+        tmpl = re.compile(r'<template[^>]*\bid="([a-zA-Z0-9_.]+)"')
         name = re.compile(r'\bname="([^"]+)"')
         html_id = re.compile(r'\bid="([^"]+)"')
         for tree in self.trees:
@@ -517,7 +520,7 @@ class Target:
                 src = tree.show(path)
                 if not src:
                     continue
-                for xid in rec.findall(src):
+                for xid in rec.findall(src) + tmpl.findall(src):
                     ids.add(xid if "." in xid else f"{module}.{xid}")
                 node_names.update(name.findall(src))
                 node_names.update(html_id.findall(src))
@@ -1156,6 +1159,17 @@ GONE_JS_PATHS = {
     ),
 }
 
+# Data xmlids that left the 19.0 module. view-xmlid only sees inherit_id.
+# Include tests: HttpCase setUpClass is where this first raised (20_9 Gx.7).
+GONE_XMLIDS = {
+    "website.default_website": (
+        "gone at saas-19.4 (website/data/website_data.xml). Successor "
+        "base.default_website (odoo/addons/base/data/website.xml + "
+        "website._ensure_default_website_consistency). Core refs "
+        "env.ref('base.default_website')"
+    ),
+}
+
 
 def check_gone_js_paths(module: str, rel: str, src: str) -> list[Finding]:
     out: list[Finding] = []
@@ -1163,6 +1177,21 @@ def check_gone_js_paths(module: str, rel: str, src: str) -> list[Finding]:
         for path, hint in GONE_JS_PATHS.items():
             if path in line:
                 out.append(Finding("js-import", module, rel, lineno, f"{path} {hint}"))
+    return out
+
+
+def check_gone_xmlids(repo: str, module: str) -> list[Finding]:
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".py", ".xml", ".js"):
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            stripped = line.lstrip()
+            if stripped.startswith("#") or stripped.startswith("//"):
+                continue
+            for xmlid, hint in GONE_XMLIDS.items():
+                if xmlid in line:
+                    out.append(Finding(
+                        "view-xmlid", module, rel, lineno, f"{xmlid} {hint}",
+                    ))
     return out
 
 
@@ -1457,6 +1486,7 @@ def _http_import_names(clause: str) -> list[str]:
 
 
 TOOLS_ORMCACHE_RE = re.compile(r"tools\.ormcache\s*\(")
+REQUEST_WEBSITE_RE = re.compile(r"request\.website\b")
 CALENDAR_DATE_DELAY_RE = re.compile(
     r"<calendar\b[^>]*\bdate_delay\s*=",
     re.IGNORECASE,
@@ -1519,6 +1549,13 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                 out.append(Finding(
                     "python-api", module, rel, lineno,
                     "tools.ormcache: deprecated Since 20.0; use @api.ormcache(...).",
+                ))
+            if REQUEST_WEBSITE_RE.search(line):
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "request.website is gone; saas-19.4 uses request.env.website "
+                    "(ir_http no longer assigns request.website). Observed 20_9 "
+                    "Gx.7 AttributeError on jsonrpc website=True routes.",
                 ))
         for m in HTTP_FROM_RE.finditer(src):
             lineno = src.count("\n", 0, m.start()) + 1
@@ -2103,6 +2140,7 @@ def main() -> int:
             fs += check_python_api(args.repo, module)
         if "view-xmlid" in want:
             fs += check_views(args.repo, module, target, own)
+            fs += check_gone_xmlids(args.repo, module)
         if "view-anchor" in want:
             fs += check_view_anchors(args.repo, module, target, own)
         if "qweb-tcall" in want:
