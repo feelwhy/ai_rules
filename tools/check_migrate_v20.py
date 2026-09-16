@@ -12,15 +12,27 @@ phase-1 analysis proved are findable statically:
                (/web/static/lib/jquery/jquery.js)
   view-xmlid   an `inherit_id` ref to a core view that no longer exists
   field-lit         a literal use of a removed field name (`datas`, `product_uom`)
+  access-or         a grouped ir.access with an empty domain next to another
+                    grouped row on the same model that has a real domain —
+                    empty is Domain.TRUE and ORs the filter away (rule 22)
+  access-grant      a base.group_user permission with write ops on a model
+                    that also has a product-group permission — 19.0 ir.rule
+                    on Internal User was a filter, not an ACL grant (rule 22)
   js-symbol         a named import whose file still exists but the export does not
   owl-xpath         an OWL t-inherit XPath selecting @t-ref / @t-esc on a core
                     template, or hasclass() of a class that left the inherited
                     t-name (o-kanban-button-new left web.KanbanView), or a
                     position= tag whose t-if/t-elif/t-else value is not on
-                    that t-name (canDownload vs this.canDownload)
+                    that t-name (canDownload vs this.canDownload), or a
+                    position= / @class= inherit whose exact class="…" string
+                    is not on that t-name (o_calendar_sidebar vs the saas
+                    collapsed-rail class list)
   owl-tref          an OWL-2 named t-ref / t-model / t-portal in our own static/src template
   owl-this          a t-inherit / standalone / xml` OWL template still uses
-                    bare state. / props. / model. (OWL 3 compile scope is this.*)
+                    a bare OWL-3 scope name (state. / panelState. / env. /
+                    props. / model.), a bare getter (t-att-class="panelClass"),
+                    or a bare method bind (update.bind="handleChange",
+                    t-on-click="clear", or t-on-keydown="(event) => foo()")
   qweb-tcall        inner t-set of a t-call (breadcrumbs_searchbar / object /
                     token / title) — saas-19.4 no longer copies those onto the
                     callee; write a t-call attribute or a controller value
@@ -28,8 +40,13 @@ phase-1 analysis proved are findable statically:
   python-api        a call to a core method gone at the target
                     (get_param / set_param / Registry.clear_cache /
                     Store.get_result)
+                    or a leftover tools.ormcache (use odoo.api.ormcache)
                     or a named import that left odoo.http
                     (Stream / content_disposition)
+  calendar-attr     a <calendar date_delay=...> — gone from RNG and
+                    FIELD_ATTRIBUTE_NAMES at saas-19.4; drop the attribute
+  qweb-tesc         t-esc / t-raw in a non-static XML arch (ir.ui.view);
+                    saas _validate_qweb_directive forbids them. Use t-out.
   patch-target      a `patch()` on an import path that no longer resolves
   patch-shadow      a prototype patch of a member upstream declares as a class field
   manifest-version  a serie-prefixed manifest version while --odoo-ref is a saas-* branch
@@ -62,6 +79,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import csv
 import json
 import os
 import re
@@ -187,15 +205,36 @@ OWL_TNAME_OPEN_RE = re.compile(
 )
 OWL_TINHERIT_RE = re.compile(r'\bt-inherit="([^"]+)"')
 OWL_HASCLASS_RE = re.compile(r"""hasclass\(\s*['"]([^'"]+)['"]\s*\)""")
-# OWL 3 compiled templates no longer bind `state` / `props` / `model` as bare names.
-# Core inherit targets (web.KanbanRenderer, …) now write this.state / this.props.
-OWL_BARE_SCOPE_RE = re.compile(r"(?<![\w.])(state|props|model)\.")
+# OWL 3 compiled templates no longer bind `state` / `props` / `model` as
+# bare names — nor `panelState` / `env` (20_5 Gx.8 KPI + calendar).
+# Core inherit targets write this.state / this.props / this.env.
+OWL_BARE_SCOPE_RE = re.compile(
+    r"(?<![\w.])([A-Za-z_]*[Ss]tate|props|model|env)\."
+)
 # OWL 3 compile: ctx.foo is not auto-bound. t-props="getX()" dies
 # (getCloudManagerNavigationProps is not a function).
 OWL_BARE_CALL_RE = re.compile(
-    r"""\b(?:t-props|t-out|t-esc)=["'](?!this\.)([A-Za-z_]\w*)\("""
+    r"""\b(?:t-props|t-out|t-esc|t-att-class|t-att-style)=["'](?!this\.)([A-Za-z_]\w*)\("""
+)
+# Getters and methods used as a bare ident: t-att-class="panelClass",
+# t-on-click="clear". Arrow / this. values are excluded.
+OWL_BARE_ATTR_IDENT_RE = re.compile(
+    r"""\b(?:t-att-class|t-att-style|t-on-click(?:\.\w+)?)=["'](?!this\.|[\(\[])([A-Za-z_]\w*)["']"""
+)
+# update.bind="handleChange" → TypeError: Cannot read properties of
+# undefined (reading 'bind'). 20_14 already wrote this.handleChange.
+OWL_BARE_BIND_RE = re.compile(
+    r"""\b[A-Za-z_]\w*\.bind=["'](?!this\.)([A-Za-z_]\w*)["']"""
+)
+# t-on-keydown="(event) => _onSearchNavigation(...)" — OWL 3 handler is
+# undefined (20_5 KPI formula). Arrow + this. is fine.
+OWL_BARE_ARROW_CALL_RE = re.compile(
+    r"""\bt-on-[\w.]+=["'][^"']*?=>\s*(?!this\.)([A-Za-z_]\w*)\s*\("""
 )
 OWL_CLASS_ATTR_RE = re.compile(r'\bclass="([^"]+)"')
+OWL_XPATH_CLASS_RE = re.compile(
+    r"""//([A-Za-z][\w.]*)\[@class=(?:&quot;|'|\")(.*?)(?:&quot;|'|\")\]"""
+)
 # Inline OWL templates (`xml\`...\``) are not t-name files. Bare state.
 # there still dies (portal jsTreePortal).
 OWL_XML_LIT_RE = re.compile(r"\bxml\s*`([\s\S]*?)`")
@@ -517,6 +556,34 @@ class Target:
                         classes.update(raw.split())
                     out.setdefault(name, set()).update(classes)
         return {name: frozenset(classes) for name, classes in out.items()}
+
+    @lru_cache(maxsize=1)
+    def owl_template_class_strings(self) -> dict[str, frozenset[str]]:
+        """`t-name` -> exact `class="…"` attribute strings at the target.
+
+        OWL inherit matches the opening-tag attribute, not a class token.
+        `class="o_calendar_sidebar"` does not match saas
+        `class="o_calendar_sidebar flex-grow-0 …"` even though the token
+        still exists on the collapsed rail.
+        """
+        out: dict[str, set[str]] = {}
+        for tree in self.trees:
+            seen: set[str] = set()
+            grep_out = tree.grep(r't-name=', "*.xml", raw_paths=True)
+            for line in grep_out.splitlines():
+                parts = line.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                path = parts[1]
+                if "/static/" not in path or path in seen:
+                    continue
+                seen.add(path)
+                src = tree.show(path)
+                if not src:
+                    continue
+                for _off, name, _inherit, body in _owl_template_spans(src):
+                    out.setdefault(name, set()).update(OWL_CLASS_ATTR_RE.findall(body))
+        return {name: frozenset(vals) for name, vals in out.items()}
 
     @lru_cache(maxsize=1)
     def owl_template_directives(self) -> dict[str, frozenset[tuple[str, str, str]]]:
@@ -1179,9 +1246,52 @@ def _owl_template_spans(src: str):
         yield match.start(), name, inherit, src[match.end():end]
 
 
+def _owl_sidebar_hint(inherit: str, exact: str) -> str:
+    if inherit == "web.CalendarSidePanel" and "o_calendar_sidebar" in exact.split():
+        return (
+            " saas moved the expanded filters to "
+            "o_calendar_sidepanel_content; o_calendar_sidebar is now the "
+            "collapsed rail with extra classes. Successor: "
+            "//div[hasclass('o_calendar_sidepanel_content')]."
+        )
+    return ""
+
+
+def _owl_this_extra_findings(src: str, rel: str, module: str, off: int, body: str, inherit: str) -> list[Finding]:
+    """Bare getter / bind / t-on-click idents. OWL 3 compile scope is this.*."""
+    out: list[Finding] = []
+    where = "t-inherit" if inherit else "OWL"
+    for am in OWL_BARE_ATTR_IDENT_RE.finditer(body):
+        lineno = src.count("\n", 0, off) + body[:am.start()].count("\n") + 1
+        out.append(Finding(
+            "owl-this", module, rel, lineno,
+            f"{where} template uses bare {am.group(1)!r} as an attribute. "
+            f"OWL 3 compile scope is this.{am.group(1)} "
+            f"(panelClass / panelStyle / t-on-click=\"clear\").",
+        ))
+    for bm in OWL_BARE_BIND_RE.finditer(body):
+        lineno = src.count("\n", 0, off) + body[:bm.start()].count("\n") + 1
+        out.append(Finding(
+            "owl-this", module, rel, lineno,
+            f"{where} template uses {bm.group(1)!r} without this. on .bind. "
+            f"Successor: update.bind=\"this.{bm.group(1)}\" "
+            f"(TypeError reading 'bind'; 20_14 rule_parent already prefixes).",
+        ))
+    for am in OWL_BARE_ARROW_CALL_RE.finditer(body):
+        lineno = src.count("\n", 0, off) + body[:am.start()].count("\n") + 1
+        out.append(Finding(
+            "owl-this", module, rel, lineno,
+            f"{where} template calls {am.group(1)}() in a t-on arrow without this. "
+            f"Successor: (event) => this.{am.group(1)}(...) "
+            f"(Invalid handler expression; 20_5 KPI formula).",
+        ))
+    return out
+
+
 def check_owl_templates(repo: str, module: str, target: Target | None = None) -> list[Finding]:
     """OWL t-inherit XPath on @t-ref, OWL-2 named t-ref, dead hasclass(), and dead t-if/t-elif."""
     parent_classes = target.owl_template_classes() if target is not None else {}
+    parent_class_strs = target.owl_template_class_strings() if target is not None else {}
     parent_dirs = target.owl_template_directives() if target is not None else {}
     out: list[Finding] = []
     for full, rel in walk(repo, module, ".xml"):
@@ -1223,6 +1333,7 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                     f"{where} template calls {cm.group(1)}() without this. "
                     f"OWL 3 compile scope is ctx; methods are this.{cm.group(1)}().",
                 ))
+            out.extend(_owl_this_extra_findings(src, rel, module, off, body, inherit))
             if inherit and inherit in parent_dirs:
                 known_dirs = parent_dirs[inherit]
                 for doff, tag, attr, val in _owl_position_directive_triples(body):
@@ -1239,6 +1350,36 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                         "owl-xpath", module, rel, lineno,
                         f"t-inherit {tag} {attr}={val!r} is not on {inherit} at "
                         f"the target.{hint}",
+                    ))
+            if inherit and inherit in parent_class_strs:
+                known_strs = parent_class_strs[inherit]
+                for xm in OWL_XPATH_CLASS_RE.finditer(body):
+                    exact = xm.group(2)
+                    if exact in known_strs:
+                        continue
+                    lineno = src.count("\n", 0, off) + body[:xm.start()].count("\n") + 1
+                    hint = _owl_sidebar_hint(inherit, exact)
+                    out.append(Finding(
+                        "owl-xpath", module, rel, lineno,
+                        f"t-inherit XPath @class={exact!r} is not an exact "
+                        f"class=\"…\" on {inherit} at the target.{hint}",
+                    ))
+                for match in OWL_OPEN_TAG_RE.finditer(body):
+                    _tag, attrs = match.group(1), match.group(2)
+                    if "position=" not in attrs:
+                        continue
+                    cm = OWL_CLASS_ATTR_RE.search(attrs)
+                    if not cm:
+                        continue
+                    exact = cm.group(1)
+                    if exact in known_strs:
+                        continue
+                    lineno = src.count("\n", 0, off) + body[:match.start()].count("\n") + 1
+                    hint = _owl_sidebar_hint(inherit, exact)
+                    out.append(Finding(
+                        "owl-xpath", module, rel, lineno,
+                        f"t-inherit class={exact!r} position= is not an exact "
+                        f"class=\"…\" on {inherit} at the target.{hint}",
                     ))
             if not parent_classes or not inherit or inherit not in parent_classes:
                 continue
@@ -1276,6 +1417,7 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                     f"xml` template calls {cm.group(1)}() without this. "
                     f"OWL 3 compile scope is ctx; methods are this.{cm.group(1)}().",
                 ))
+            out.extend(_owl_this_extra_findings(src, rel, module, off, body, ""))
     return out
 
 
@@ -1312,6 +1454,52 @@ def _http_import_names(clause: str) -> list[str]:
     return names
 
 
+TOOLS_ORMCACHE_RE = re.compile(r"tools\.ormcache\s*\(")
+CALENDAR_DATE_DELAY_RE = re.compile(
+    r"<calendar\b[^>]*\bdate_delay\s*=",
+    re.IGNORECASE,
+)
+
+
+QWEB_TESC_RE = re.compile(r"""\bt-(?:esc|raw)\s*=""")
+
+
+def check_qweb_tesc(repo: str, module: str) -> list[Finding]:
+    """t-esc/t-raw in ir.ui.view arch is forbidden at saas-19.4."""
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml"):
+        if "/static/" in rel.replace(os.sep, "/"):
+            continue
+        src = read(full)
+        for match in QWEB_TESC_RE.finditer(src):
+            lineno = src.count("\n", 0, match.start()) + 1
+            out.append(Finding(
+                "qweb-tesc", module, rel, lineno,
+                "t-esc/t-raw in ir.ui.view arch is forbidden "
+                "(_validate_qweb_directive). Use t-out. OWL static/src "
+                "templates may keep t-esc.",
+            ))
+    return out
+
+
+def check_calendar_attrs(repo: str, module: str) -> list[Finding]:
+    """<calendar date_delay> is gone from RNG + arch parser at saas-19.4."""
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml"):
+        if "/static/" in rel.replace(os.sep, "/"):
+            continue
+        src = read(full)
+        for match in CALENDAR_DATE_DELAY_RE.finditer(src):
+            lineno = src.count("\n", 0, match.start()) + 1
+            out.append(Finding(
+                "calendar-attr", module, rel, lineno,
+                "<calendar date_delay=...> is gone at saas-19.4 "
+                "(calendar_view.rng + FIELD_ATTRIBUTE_NAMES). "
+                "Drop the attribute; keep date_start / date_stop.",
+            ))
+    return out
+
+
 def check_python_api(repo: str, module: str) -> list[Finding]:
     out: list[Finding] = []
     pats = {name: re.compile(rf"\.{re.escape(name)}\s*\(") for name in REMOVED_PYTHON_CALLS}
@@ -1325,6 +1513,11 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                 if pats[name].search(line):
                     out.append(Finding("python-api", module, rel, lineno,
                                        f"{name}(): {why}"))
+            if TOOLS_ORMCACHE_RE.search(line):
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "tools.ormcache: deprecated Since 20.0; use @api.ormcache(...).",
+                ))
         for m in HTTP_FROM_RE.finditer(src):
             lineno = src.count("\n", 0, m.start()) + 1
             for name in _http_import_names(m.group(1)):
@@ -1506,6 +1699,217 @@ def check_security_models(repo: str, module: str, target: Target) -> list[Findin
     return out
 
 
+# saas ir.access: empty domain on a permission → Domain.TRUE, then
+# Domain.OR(permissions) & Domain.AND(restrictions) (ir_access.py:308 / :355).
+# 19.0 ir.model.access had no record filter; a leftover empty ACL therefore
+# swallows every grouped domain on that model. An explicit [(1, '=', 1)] is
+# intentional (19.0 TRUE rules) and is not this kind. Restrictions (no
+# group_id) AND and are safe next to an empty ACL.
+_ACCESS_RECORD_RE = re.compile(
+    r"<record\b([^>]*)>(.*?)</record>",
+    re.DOTALL | re.IGNORECASE,
+)
+_ACCESS_ATTR_RE = re.compile(r"""\b(id|model)=["']([^"']+)["']""", re.I)
+_ACCESS_FIELD_RE = re.compile(
+    r"<field\b([^>]*?)\s*/>|<field\b([^>]*)>(.*?)</field>",
+    re.DOTALL | re.IGNORECASE,
+)
+_ACCESS_FIELD_ATTR_RE = re.compile(r"""\b(name|ref)=["']([^"']+)["']""", re.I)
+_ACCESS_TRUE_DOMAIN_RE = re.compile(
+    r"\[\s*\(\s*1\s*,\s*['\"]=(?:=)?['\"]\s*,\s*1\s*\)\s*\]",
+)
+
+
+def _access_ops(operation: str) -> set[str]:
+    return set(operation or "") & set("crud")
+
+
+def _access_domain_kind(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text or text in {"False", "[]"}:
+        return "empty"
+    compact = re.sub(r"\s+", "", text)
+    if _ACCESS_TRUE_DOMAIN_RE.fullmatch(compact):
+        return "true"
+    return "real"
+
+
+def _access_model_from_ref(ref: str) -> str:
+    name = (ref or "").split(".")[-1]
+    if name.startswith("model_"):
+        return name[len("model_"):].replace("_", ".")
+    return name
+
+
+def _iter_ir_access_xml(src: str, rel: str):
+    for match in _ACCESS_RECORD_RE.finditer(src):
+        attrs = {k.lower(): v for k, v in _ACCESS_ATTR_RE.findall(match.group(1))}
+        if attrs.get("model") != "ir.access":
+            continue
+        fields: dict[str, tuple[str, str]] = {}
+        for field in _ACCESS_FIELD_RE.finditer(match.group(2)):
+            raw_attrs = field.group(1) if field.group(1) is not None else field.group(2)
+            fattrs = {k.lower(): v for k, v in _ACCESS_FIELD_ATTR_RE.findall(raw_attrs or "")}
+            name = fattrs.get("name")
+            if not name:
+                continue
+            fields[name] = (fattrs.get("ref", ""), (field.group(3) or "").strip())
+        model_ref = fields.get("model_id", ("", ""))[0]
+        group_ref = fields.get("group_id", ("", ""))[0]
+        operation = fields.get("operation", ("", ""))[1]
+        domain = fields.get("domain", ("", ""))[1]
+        if not model_ref or not operation:
+            continue
+        yield {
+            "id": attrs.get("id", ""),
+            "model": _access_model_from_ref(model_ref),
+            "group": group_ref,
+            "ops": _access_ops(operation),
+            "kind": _access_domain_kind(domain),
+            "domain": domain,
+            "path": rel,
+            "line": src[: match.start()].count("\n") + 1,
+        }
+
+
+def _iter_ir_access_csv(src: str, rel: str):
+    rows = src.splitlines()
+    header = None
+    header_idx = None
+    for idx, line in enumerate(rows):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        header = next(csv.reader([line]))
+        header_idx = idx
+        break
+    if not header:
+        return
+    index = {name.strip(): i for i, name in enumerate(header)}
+    model_i = index.get("model_id")
+    group_i = index.get("group_id/id", index.get("group_id:id"))
+    op_i = index.get("operation")
+    domain_i = index.get("domain")
+    id_i = index.get("id")
+    if model_i is None or op_i is None:
+        return
+    for lineno, line in enumerate(rows[header_idx + 1 :], header_idx + 2):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        cols = next(csv.reader([line]))
+        if len(cols) <= max(model_i, op_i):
+            continue
+        group = cols[group_i].strip() if group_i is not None and group_i < len(cols) else ""
+        domain = cols[domain_i].strip() if domain_i is not None and domain_i < len(cols) else ""
+        yield {
+            "id": cols[id_i].strip() if id_i is not None and id_i < len(cols) else "",
+            "model": cols[model_i].strip(),
+            "group": group,
+            "ops": _access_ops(cols[op_i].strip()),
+            "kind": _access_domain_kind(domain),
+            "domain": domain,
+            "path": rel,
+            "line": lineno,
+        }
+
+
+def check_access_or(repo: str, module: str) -> list[Finding]:
+    """Empty grouped ir.access ORs away a sibling domain (rule 22)."""
+    rows: list[dict] = []
+    for full, rel in walk(repo, module, ".xml", ".csv"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/" in rel_posix:
+            continue
+        src = read(full)
+        if rel_posix.endswith(".csv"):
+            if os.path.basename(rel_posix) != "ir.access.csv":
+                continue
+            rows.extend(_iter_ir_access_csv(src, rel))
+        else:
+            rows.extend(_iter_ir_access_xml(src, rel))
+
+    by_model: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        if row["model"]:
+            by_model[row["model"]].append(row)
+
+    out: list[Finding] = []
+    for model, items in sorted(by_model.items()):
+        permissions = [item for item in items if item["group"]]
+        real = [item for item in permissions if item["kind"] == "real"]
+        if not real:
+            continue
+        for empty in permissions:
+            if empty["kind"] != "empty":
+                continue
+            sibling = next(
+                (item for item in real if item["ops"] & empty["ops"]),
+                None,
+            )
+            if sibling is None:
+                continue
+            out.append(Finding(
+                "access-or", module, empty["path"], empty["line"],
+                f"grouped {empty['id'] or empty['group']} on {model} "
+                f"has an empty domain; saas ORs permissions and empty is "
+                f"Domain.TRUE, so it hides {sibling['id'] or sibling['group']} "
+                f"({sibling['path']}:{sibling['line']}). Put that domain on "
+                f"this row, drop the empty ACL if a same-group domain "
+                f"permission already covers the ops, or write [(1, '=', 1)] "
+                f"if 19.0 had an intentional all-records rule.",
+            ))
+    return out
+
+
+def _is_internal_user_group(group: str) -> bool:
+    return group == "base.group_user" or group.endswith(".base.group_user")
+
+
+def check_access_grant(repo: str, module: str) -> list[Finding]:
+    """base.group_user write + product-group ACL is a 19.0 rule grant (rule 22)."""
+    rows: list[dict] = []
+    for full, rel in walk(repo, module, ".xml", ".csv"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/" in rel_posix:
+            continue
+        src = read(full)
+        if rel_posix.endswith(".csv"):
+            if os.path.basename(rel_posix) != "ir.access.csv":
+                continue
+            rows.extend(_iter_ir_access_csv(src, rel))
+        else:
+            rows.extend(_iter_ir_access_xml(src, rel))
+
+    by_model: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        if row["model"] and row["group"]:
+            by_model[row["model"]].append(row)
+
+    out: list[Finding] = []
+    for model, items in sorted(by_model.items()):
+        product = [item for item in items if not _is_internal_user_group(item["group"])]
+        if not product:
+            continue
+        for row in items:
+            if not _is_internal_user_group(row["group"]):
+                continue
+            if not (row["ops"] & set("cud")):
+                continue
+            sibling = product[0]
+            out.append(Finding(
+                "access-grant", module, row["path"], row["line"],
+                f"grouped {row['id'] or row['group']} on {model} is "
+                f"base.group_user with write ops {''.join(sorted(row['ops']))}; "
+                f"19.0 ir.rule on Internal User did not grant ACL. "
+                f"A product-group row already exists "
+                f"({sibling['id'] or sibling['group']} at "
+                f"{sibling['path']}:{sibling['line']}). Move the domain onto "
+                f"that group and copy the 19.0 ACL operations (usually r).",
+            ))
+    return out
+
+
 def _manifest_version(src: str) -> tuple[str | None, int]:
     """(`version` string, lineno) from a module `__manifest__.py`.
 
@@ -1586,7 +1990,7 @@ def main() -> int:
                                    "(dead-hook,stale-override,js-import,js-symbol,"
                                    "owl-xpath,owl-tref,owl-this,owl-hook,python-api,patch-target,"
                                    "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
-                                   "field-lit,manifest-version)")
+                                   "access-or,access-grant,field-lit,manifest-version,calendar-attr,qweb-tesc)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -1611,8 +2015,9 @@ def main() -> int:
     want = kinds or {
         "dead-hook", "stale-override", "js-import", "js-symbol", "owl-xpath",
         "owl-tref", "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow",
-        "view-xmlid", "view-anchor", "qweb-tcall", "security-model", "field-lit",
-        "manifest-version",
+        "view-xmlid", "view-anchor", "qweb-tcall", "security-model", "access-or",
+        "access-grant", "field-lit",
+        "manifest-version", "calendar-attr", "qweb-tesc",
     }
 
     if not args.quiet:
@@ -1649,10 +2054,18 @@ def main() -> int:
             fs += check_qweb_tcall(args.repo, module)
         if "security-model" in want:
             fs += check_security_models(args.repo, module, target)
+        if "access-or" in want:
+            fs += check_access_or(args.repo, module)
+        if "access-grant" in want:
+            fs += check_access_grant(args.repo, module)
         if "field-lit" in want:
             fs += check_field_literals(args.repo, module)
         if "manifest-version" in want:
             fs += check_manifest_version(args.repo, module, target)
+        if "calendar-attr" in want:
+            fs += check_calendar_attrs(args.repo, module)
+        if "qweb-tesc" in want:
+            fs += check_qweb_tesc(args.repo, module)
         if kinds:
             fs = [f for f in fs if f.kind in kinds]
         findings += fs
@@ -1665,8 +2078,9 @@ def main() -> int:
             by_kind[f.kind].append(f)
         for kind in ("dead-hook", "js-import", "js-symbol", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
-                     "view-anchor", "qweb-tcall", "security-model", "field-lit", "manifest-version",
-                     "stale-override"):
+                     "view-anchor", "qweb-tcall", "qweb-tesc", "calendar-attr", "security-model",
+                     "access-or", "access-grant", "field-lit",
+                     "manifest-version", "stale-override"):
             group = by_kind.get(kind)
             if not group:
                 continue

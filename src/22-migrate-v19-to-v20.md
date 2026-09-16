@@ -360,6 +360,22 @@ self.env.transaction.invalidate_ormcache("stable")
 self.env.transaction.invalidate_ormcache()
 ```
 
+### `tools.ormcache` is deprecated — import from `odoo.api`
+
+`@tools.ormcache(...)` still exists at saas-19.4 but emits
+`DeprecationWarning: Since 20.0 import ormcache from odoo.api` (observed
+`20_5` Gx.6 `joint_calendar` `ir_ui_menu.py`). The warning gate treats that as
+ours. Successor: `@api.ormcache(...)`. Checker `python-api` flags `tools.ormcache`.
+
+```python
+# BEFORE
+from odoo import api, models, tools
+@tools.ormcache("self.env.uid")
+# AFTER
+from odoo import api, models
+@api.ormcache("self.env.uid")
+```
+
 ### `mail` Store API redesigned around `Store.FieldList`
 
 `Store.add()` changed signature and `Store.get_result()` is gone:
@@ -495,13 +511,92 @@ Three traps in that header, all silent if you copy the old one:
   ['name', 'model']`. All 236 core `ir.access.csv` files use this exact header.
 - **`group_id/id`** uses the modern `/id` separator, not `:id`.
 - **`domain`** is a real column now: a record rule and an ACL row are the same thing, so the two
-  files may be merged. An empty `domain` is the old ACL behavior.
+  files may be merged.
 
 Because the CSV can now carry a domain, ACL rows and record rules are interchangeable in form.
-Do not take that as licence to restructure a module's security while porting — keep the same rows,
-translated one to one, so a reviewer can diff them.
+Do not restructure a module's security while porting — keep the same rows, translated one to
+one, **except** an empty ACL domain is not the old ACL behavior (see below).
+
+### Empty ACL permission ORs away the record rule
+
+On 19.0, `ir.model.access` had no record filter. An empty ACL only meant "this group may use
+the model"; `ir.rule` still applied.
+
+On saas-19.4 both are `ir.access`. `_get_domain_for` is
+`Domain.OR(permissions) & Domain.AND(restrictions)` (`ir_access.py:355`). An empty `domain` on
+a **permission** (`group_id` set) becomes `Domain.TRUE` (`:308`). TRUE OR anything is TRUE, so
+every grouped domain on that model is ignored.
+
+That is silent. Install succeeds. The user sees every record.
+
+Successor:
+
+1. A 19.0 **global** rule (no `groups`) stays a **restriction** (no `group_id`). Restrictions
+   AND. An empty ACL next to that is safe — `20_2` `sticky_notes` / `smart_warnings`,
+   `20_5` `joint_calendar`.
+2. A 19.0 **grouped** rule next to an empty ACL: **put that domain on the ACL CSV row**, or
+   drop the empty ACL if a same-group domain permission already covers those operations.
+   Do not leave the empty permission.
+3. A 19.0 `[(1, '=', 1)]` rule (intentional all-records) must stay an **explicit**
+   `[(1, '=', 1)]` on the 20.0 permission. Empty is indistinguishable from a forgotten ACL;
+   the checker flags only empty, not explicit TRUE.
+4. Do not invent `group_id` on a rule that was global.
+
+Observed `20_5` Gx.8: empty `access_kpi_item` for `group_kpi_user` ORed away
+`kpi_item_multi_company_rule` (`access_user_ids`). Demo saw every KPI. Same shape:
+`total_notify` empty `access_total_notify` next to `total_notify_user` (`user_id`).
+`20_14` `access_clouds_share` is empty next to the partner-domain Internal User row — 19.0
+already had a TRUE File Manager rule, so write `[(1, '=', 1)]` there (hygiene, not a
+product regression). `20_2` / `20_c` have no empty-permission + grouped-domain pair.
+
+Checker kind `access-or`.
+
+### Grouped `ir.rule` is not an ACL grant
+
+On 19.0, `ir.rule` never granted model access. A grouped rule on
+`base.group_user` only filtered records for people who already had
+`ir.model.access`. The ACL row stayed on the product group
+(`group_kpi_user` read-only, `group_kpi_admin` CRUD).
+
+On saas-19.4 a grouped `ir.access` **is** the ACL. Porting that
+`base.group_user` rule as `operation=crud` gives every Internal User
+create/write/unlink, and `Domain.OR` unions it with the product-group
+row so KPI User also becomes writable. Observed `20_5` Gx.9 review:
+`kpi_item_multi_company_rule` / `kpi_category_multi_company_rule` /
+`kpi_tag_multi_company_rule`.
+
+Successor:
+
+1. Put the 19.0 rule domain on the **product-group** permission
+   (`group_kpi_user`), not on `base.group_user`.
+2. Copy the 19.0 **ACL operations** (`r` vs `crud`), not a default
+   `crud`. 19.0 `ir.rule` `perm_*` flags (scorecard line read vs edit)
+   stay as separate rows with `r` / `cud`.
+3. Keep 19.0 global rules as restrictions (no `group_id`).
+4. Do not leave a `base.group_user` write permission on a model that
+   also has a product-group ACL — that is the grant.
+
+Checker kind `access-grant`.
 
 ## XML / views
+
+### Calendar `date_delay` is gone (RNG + arch parser)
+
+19.0 `calendar` accepted `date_delay` (`odoo/addons/base/rng/calendar_view.rng`,
+`web/.../calendar_arch_parser.js` `FIELD_ATTRIBUTE_NAMES`). saas-19.4 dropped it
+from both. The model field may stay; the **view attribute** kills `-i`:
+`Invalid attribute date_delay for element calendar`. Observed `20_5` Gx.6
+`joint_calendar` `joint_event_view_calendar`. Successor: drop the attribute.
+`date_start` + `date_stop` remain. Checker kind `calendar-attr`.
+
+### `t-esc` / `t-raw` in `ir.ui.view` arch are forbidden
+
+`_validate_qweb_directive` (`ir_ui_view.py:2371`) allows `t-out` on qweb-based
+views (kanban, card, and enterprise `gantt`) and rejects `t-esc`. Observed
+`20_5` Gx.6 `joint_calendar_gantt` `joint_event_view_gantt`
+(`Forbidden owl directive used in arch (t-esc)`). Successor: `t-out`. OWL
+`static/src` templates may keep `t-esc`. Checker kind `qweb-tesc` (skips
+`/static/`).
 
 ### Named inherit anchors: check the node, not just the view
 
@@ -704,20 +799,34 @@ File Manager. Successor: `t-elif="this.canDownload(attachment)"`. Drop a dead
 indexes `(tag, t-if|t-elif|t-else, value)` per inherited `t-name`. A hasclass-only
 pass reported this clean.
 
-**Bare `state` / `props` / `model` in a `t-inherit` template is undefined.** OWL 3
-does not put those names in the compile scope. Core saas templates write
-`this.state` / `this.props` / `this.model` (19.0 `kanban_renderer.xml` still has
+**`class="…" position=` is the same exact-string match.** saas `web.CalendarSidePanel`
+still has a node whose class *token* is `o_calendar_sidebar`, but the attribute is
+`class="o_calendar_sidebar flex-grow-0 …"` and that node is the **collapsed rail**.
+The expanded filters live on `o_calendar_sidepanel_content`. A leftover
+`<div class="o_calendar_sidebar" position="inside">` dies at compile
+(`Element '…' cannot be located`) and **blocks the Joint Calendar menu**.
+`hasclass('o_calendar_sidebar')` would compile and attach Refresh to the rail —
+wrong UX. Successor: `//div[hasclass('o_calendar_sidepanel_content')]`.
+Checker `owl-xpath` now indexes exact `class="…"` strings on `position=` tags
+and `@class=` XPath. Observed `20_5` Gx.8 first-click.
+
+**Bare `state` / `props` / `model` / `panelState` / `env` in an OWL template is undefined.**
+OWL 3 does not put those names in the compile scope. Core saas templates write
+`this.state` / `this.props` / `this.model` / `this.env` (19.0 `kanban_renderer.xml` still has
 bare `state.selectionAvailable`; saas-19.4 has `this.state.selectionAvailable`).
 File Manager then died with `Cannot read properties of undefined (reading
 'reloaded')` at `CloudManagersKanbanRenderer`, then
 `ctx.getCloudManagerNavigationProps is not a function`. Prefix `this.` on every
 inherit expression, including `t-props="this.getX()"`. Checker kind: `owl-this`.
-Same `this.` prefix on standalone OWL templates (`panelState`, getters,
-`t-props="this.getX()"`) **and** on `xml\`...\`` literals in JS. Portal
-`jsTreePortal` used `t-if="state.treeData"` — the left folder/tag column
-rendered empty (no TypeError in the public page). Checker `owl-this` now
-scans `xml\` templates too. File Manager `CloudNavigation` died on bare
-`panelState.collapsed` after the inherit expressions were already prefixed.
+Same `this.` prefix on standalone OWL templates (`this.panelState`, getters
+`this.panelClass` / `this.panelStyle`, `t-props="this.getX()"`,
+`update.bind="this.handleChange"`, `t-on-click="this.clear"`) **and** on
+`xml\`...\`` literals in JS. Portal `jsTreePortal` used `t-if="state.treeData"`
+— the left folder/tag column rendered empty (no TypeError in the public page).
+A `state|props|model`-only regex then missed KPI `panelState.collapsed` and
+Reminder Designer `update.bind="handleChange"` (`undefined.bind`). Observed
+`20_5` Gx.8 first-click. `20_14` `cloud_navigation.xml` / `rule_parent.xml`
+already prefixed; `20_2` has no FieldFilter.
 
 **jstree + `owl.proxy` / `state` plugin:** do not keep the tree payload on a
 reactive `proxy`. jstree mutates `core.data` in place; a proxy write re-renders
@@ -883,17 +992,21 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `stale-override` | absent at **both** refs — already dead before this port; a defect on the current serie, not porting work |
 | `js-import` | an `@mod/path` import resolving to no file in `odoo` or `enterprise`, or a `loadJS` URL deleted at the target (`/web/static/lib/jquery/jquery.js`) |
 | `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid |
-| `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`) |
+| `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
-| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses bare `state.` / `props.` / `model.` — OWL 3 compile scope is `this.*` |
+| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`), a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`) |
 | `qweb-tcall` | first-child `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` on a `t-call` — saas-19.4 slot only |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), or a named import that left `odoo.http` (`Stream` / `content_disposition`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), or a named import that left `odoo.http` (`Stream` / `content_disposition`) |
+| `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
+| `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
 | `patch-shadow` | a `patch(X.prototype, …)` member that upstream declares as a **class field** on the patched class or an ancestor — an own instance property shadows it, so it never runs, on any serie |
 | `view-xmlid` | an `inherit_id` ref to a core view that no longer exists |
 | `view-anchor` | an inherit anchor (`@name=` / `@id=` predicate, or a `position=` tag's `name` / `id`) that exists in no target view — a signal, see the caveat above |
 | `security-model` | a data file declaring `ir.rule` / `ir.model.access`, gone at the target; CSV findings mean **rename the file** |
+| `access-or` | a grouped `ir.access` with an **empty** domain on a model that also has a grouped row with a real domain and overlapping ops — empty is `Domain.TRUE` and ORs the filter away. Explicit `[(1, '=', 1)]` is not this kind. Restrictions (no `group_id`) AND and are safe |
+| `access-grant` | a `base.group_user` permission with write ops (`c`/`u`/`d`) on a model that also has a product-group permission — 19.0 `ir.rule` on Internal User was a filter, not an ACL grant |
 | `field-lit` | a literal use of a removed field name |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
 
@@ -955,7 +1068,21 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
   `this`. Core saas templates already write `this.state`. `owl-this` scans
   inherit bodies, standalone OWL templates (`t-props="getX()"`), **and**
   `xml\`...\`` literals in JS. A file-only `t-name` walk missed portal
-  `jsTreePortal` (`t-if="state.treeData"`).
+  `jsTreePortal` (`t-if="state.treeData"`). A `state|props|model`-only
+  regex then missed `panelState.collapsed`, `env.isSmall`,
+  `t-att-class="panelClass"`, and `update.bind="handleChange"` (`20_5`
+  Gx.8 first-click). The kind now flags `*State.` / `env.` / bare bind /
+  bare `t-att-*` / bare `t-on-click` idents.
+- **A class token on the parent is not an exact `class="…"` inherit.** OWL
+  `applyInheritance` matches the opening-tag attribute string.
+  `<div class="o_calendar_sidebar" position="inside">` does not match saas
+  `class="o_calendar_sidebar flex-grow-0 …"`. `hasclass()` indexing
+  reported clean because the token survived on the collapsed rail.
+  `owl-xpath` now indexes exact `class=` strings on `position=` tags.
+- **`t-esc` in `ir.ui.view` is not OWL `t-esc`.** saas `_validate_qweb_directive`
+  forbids `t-esc`/`t-raw` on qweb-based arches (kanban, card, gantt). OWL
+  `static/src` templates may keep `t-esc`. `qweb-tesc` skips `/static/`. A
+  view-only pass that ignored gantt popovers hid `joint_calendar_gantt`.
 - **Inner `t-set` of a `t-call` is the slot, not the callee.** 19.0 forced
   `str(qwebContent)` when the call had only `t-*` attrs plus child `t-set`
   (`is_deprecated_version`). saas-19.4 deleted that. Checker `qweb-tcall`
@@ -977,6 +1104,16 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
 - **The target node-name set rides on the existing XML walk.** `view_xmlids()` already `git show`s
   every XML file in both trees, so the anchor lookup is a set membership, not one `git grep` per
   anchor (553 `position=` tags in `tools` would otherwise mean 553 greps).
+- **An empty grouped `ir.access` domain is not the 19.0 ACL.** saas
+  `Domain.OR(permissions)` treats empty as `Domain.TRUE` (`ir_access.py:308`,
+  `:355`). A one-to-one ACL+rule port leaves the rule in the file and never
+  applies it. `access-or` flags empty (not explicit `[(1, '=', 1)]`) next to a
+  sibling grouped real domain. A restriction (no `group_id`) ANDs — do not
+  flag that pair. Same-group is not required: `group_kpi_user` empty +
+  `base.group_user` domain is the incident (`20_5` KPI). Parse XML
+  `<field .../>` separately from `<field>...</field>`: a `[^>]*` that
+  swallows the `/` of `/>` ate `model_id` and hid every grouped XML
+  domain (`total_notify_user`) on the first run.
 
 ## Verify at runtime, not from this rule
 
@@ -1154,6 +1291,16 @@ without evidence does not belong in this rule.
   our wrapper `class="row"` was not enough — the heading as a sibling of
   the row (and inside a nested `.container`) is still clipped. Successor:
   no inner container; `#share_communication` is `col-12` inside the row.
+- *(2026-09-15, `20_5` Gx.6)* `<calendar date_delay=...>` dies at install:
+  RNG + `FIELD_ATTRIBUTE_NAMES` dropped `date_delay` (19.0
+  `calendar_view.rng` + `calendar_arch_parser.js`; absent at saas-19.4).
+  Drop the attribute; keep `date_start` / `date_stop`. Same run:
+  `@tools.ormcache` is a deprecation that the warning gate attributes to
+  us — `@api.ormcache`. Checker `calendar-attr` + `python-api`.
+- *(2026-09-15, `20_5` Gx.6)* Gantt popover `<t t-esc=...>` in
+  `ir.ui.view` arch dies (`Forbidden owl directive`). `t-out` is on the
+  allowed list for qweb-based views; `web_gantt` adds `gantt` to that
+  set. OWL `static/src` `t-esc` is unchanged. Checker `qweb-tesc`.
 - *(2026-09-15, `20_14` Gx.8)* saas `_to_http_stream` redirects
   `type=url` when `store_fname` is empty (`ir_attachment.py:990`). 19.0
   streamed `db_datas` / `raw` as bytes and never took that branch. Synced
@@ -1163,3 +1310,39 @@ without evidence does not belong in this rule.
   the preview group. `raw` is `BinaryValue` — use `.content`. Allow
   Documents `model=` / path; keep blocking bare `/web/image/{attach_id}`
   (proved: PNG 1885×1098 vs `size=0`).
+- *(2026-09-16, `20_5` Gx.8 walk)* First clicks died on three OWL-3 holes the
+  checker had reported clean: Joint Calendar
+  `class="o_calendar_sidebar" position="inside"` (exact-string inherit; saas
+  expanded panel is `o_calendar_sidepanel_content`), KPI
+  `panelState.collapsed` / bare `panelClass`, Reminder Designer
+  `update.bind="handleChange"` (`undefined.bind`). Same class as File
+  Manager Gx.8. `20_14` `rule_parent.xml` already had `this.handleChange`;
+  `20_2` has no FieldFilter. Checker `owl-xpath` exact `class=` +
+  `owl-this` `*State.` / `env.` / bind / getter idents.
+- *(2026-09-16, `20_5` Gx.8 re-walk)* Formula search died on
+  `t-on-keydown="(event) => _onSearchNavigation(...)"` (handler undefined)
+  and `orm.call(..., [[record.data.id]])` with a falsy id
+  (`AssertionError: Invalid falsy real id` in saas `browse`). Successor:
+  `this._onSearchNavigation`; pass `[[]]` when there is no `resId`. Checker
+  `owl-this` now flags a `t-on-*` arrow that calls a method without `this.`.
+  Same walk: empty calendars / one reminder / one KPI because
+  `odootools_demo` never installed (hard depends on unported apps) and the
+  `/tmp` seed ignored the 19.0 loaders. Gx.5 cannot be green without
+  running those loaders and proving the 19.0 record counts.
+- *(2026-09-16, `20_5` Gx.8 access)* Porting `ir.model.access` as an empty
+  grouped `ir.access` next to a grouped domain permission ORs the filter
+  away. saas `_get_domain_for` is `Domain.OR(permissions) &
+  Domain.AND(restrictions)`; empty domain is `Domain.TRUE`
+  (`ir_access.py:308`, `:355` at pin `3630379f63633612e5a9e8d435deecbe26eaa15a`).
+  19.0 ACL was not a record filter. KPI User then saw every `kpi.item`
+  despite `access_user_ids`. Successor: put the domain on the ACL row (or
+  drop the empty ACL); keep global rules as restrictions; write explicit
+  `[(1, '=', 1)]` only when 19.0 had a TRUE rule. Checker `access-or`.
+  `20_2` restrictions are safe.   `20_14` `clouds.share` File Manager empty
+  ACL matches a 19.0 TRUE rule — make the TRUE explicit. `total_notify`
+  has the same empty-ACL hole as KPI.
+- *(2026-09-16, `20_5` Gx.9 review)* Grouped 19.0 `ir.rule` on
+  `base.group_user` ported as `ir.access` `operation=crud` granted
+  every Internal User write on `kpi.item` / `kpi.category` / `kpi.tag`.
+  19.0 ACL for those models was `group_kpi_user` read-only. Successor:
+  product-group + 19.0 ops. Checker `access-grant`.
