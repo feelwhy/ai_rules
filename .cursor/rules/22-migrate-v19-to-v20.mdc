@@ -356,6 +356,131 @@ return this.list.model.mutex.exec(async () => {
 return this.list.set(currentIds);
 ```
 
+### `archInfo.openAction` left the KanbanRecord — use `this.props.openAction`
+
+19.0 `KanbanRecord.onGlobalClick` read `archInfo.openAction` from
+`this.props` (`kanban_record.js:291`). saas-19.4 moved that onto a
+**prop**: the renderer writes
+`openAction="this.props.archInfo.openAction"`
+(`kanban_renderer.xml:53`, `:87`) and the record reads
+`const { openAction } = this.props` (`:237`). `archInfo` is no
+longer passed. A leftover `archInfo.openAction.action` is
+`undefined.action`.
+
+Observed `20_4` Gx.8: opening a Password Manager bundle died
+`TypeError: Cannot read properties of undefined (reading 'action')`
+at `BundleKanbanRecord.onGlobalClick`. Successor: destructure
+`openAction` from `this.props` like core, keep the module
+`buttonContext` on `doActionButton`, fall through to `openRecord`
+when there is no action. Checker `js-symbol` greps
+`archInfo.openAction`.
+
+### Dialog Save left `web.FormView.Buttons` — use `buttonDialogTemplate`
+
+19.0 `web.FormView.Buttons` was Save / Discard / Remove / New
+(`form_controller.xml`). saas-19.4 split that: `web.FormView.Buttons`
+is only New, and dialogs `t-call` `this.props.buttonDialogTemplate`
+(`web.FormView.DialogButtons`, still Save). A leftover inherit of
+`FormView.Buttons` that xpaths `o_form_button_save` never matches, so
+the dialog keeps Save. Setting only `buttonTemplate` is ignored inside
+a dialog.
+
+Observed `20_4` Gx.8: Password Manager login showed Save / Discard and
+Enter did nothing. Successor: inherit `web.FormView.DialogButtons`,
+pass `buttonDialogTemplate` on the `View` props (same template name
+is fine). Checker `owl-xpath` now indexes `contains(@class, …)` the
+same way as `hasclass()`; `o_form_button_save` on `web.FormView.Buttons`
+is the hint.
+
+### `record.data.<many2one>[0]` is undefined — use `.id`
+
+The relational model stores a many2one as `{id, display_name}` at
+**both** refs (`fromUnityToServerValues`). `value[0]` is `undefined`.
+19.0 `browse` often swallowed that; saas-19.4 asserts
+`Invalid falsy real id` (`odoo/orm/models.py` `browse`).
+
+Observed `20_4` Gx.8: login-dialog eye / copy called
+`password.bundle.action_check_bundle_key` with `[undefined]` because
+`bundle_id[0]` was gone. Successor: `value.id` (keep a `[id, name]`
+fallback if the value can still be an array). Guard `orm.call` id
+lists the same way as the `20_5` formula `browse([False])`. Checker
+`js-symbol` greps `.\w+_id[0]`.
+
+### `static props = { ...CharField.props }` does not keep extras
+
+19.0 `CharField` declares `static props`. saas-19.4 moved the schema to
+an **instance** `props = props(charFieldProps)` (`char_field.js`). That
+function **strips** keys that are not in the schema. A leftover
+
+```js
+static props = { ...CharField.props, logIn: { type: Boolean, optional: true } };
+```
+
+does nothing: `CharField.props` is undefined, and the inherited instance
+`props()` still drops `logIn`. Reading `activeFields.attrs` is not enough
+when the widget already treated the field as a normal password.
+
+Observed `20_4` Gx.8: after DialogButtons, login still showed regenerate
+and Enter did not submit. Successor matches enterprise
+`AccountAuditClickableCharField`:
+
+```js
+import { props, t } from "@odoo/owl";
+import { CharField, charFieldProps } from "@web/views/fields/char/char_field";
+props = props({ ...charFieldProps, logIn: t.boolean().optional() });
+```
+
+Checker `js-symbol` greps `...CharField.props`.
+
+### Writing `config.orderBy` then `sortBy` clears the sort
+
+`DynamicList.orderBy` is `this.config.orderBy` at both refs. saas
+`sortBy(fieldName)` (`dynamic_list.js:190`) toggles: same first term
+with `asc=false` becomes `[]`, and empty falls back to
+`defaultOrderBy`. PWM `_applySorting` wrote `{name, asc: false}` then
+`sortBy(this.kanbanOrder)` — changing Sort by did nothing.
+
+Observed `20_4` Gx.8: All Passwords Sort by. Other ported groups have
+no `.sortBy(`. File Manager already `_load`s. Successor:
+
+```js
+await this.props.kanbanList.load({
+    orderBy: [{ name: field, asc }, { name: "id", asc: true }],
+});
+```
+
+Checker `js-symbol` greps `config.orderBy = []`.
+
+### `getRecordClasses` is gone — use `getCardClasses`
+
+19.0 `KanbanRecord` was a standalone `<article t-att-class="getRecordClasses()">`.
+saas-19.4 `KanbanRecord` extends `CardRenderer`; the article class is
+`this.getCardClasses()` (`kanban_record.js:120`, `card_renderer.js:128`).
+`getRecordClasses` is deleted. A leftover override never runs, so
+`jstr-kanban-selected` never lands and the top-right checkbox stays
+empty (PWM / File Manager). KPI already used `getCardClasses`.
+
+```js
+// BEFORE
+getRecordClasses() {
+    let result = super.getRecordClasses();
+    if (this.props.record.selected) {
+        result += " jstr-kanban-selected";
+    }
+    return result;
+}
+// AFTER
+getCardClasses() {
+    let result = super.getCardClasses();
+    if (this.props.record.selected) {
+        result += " jstr-kanban-selected";
+    }
+    return result;
+}
+```
+
+Checker `js-symbol` greps `getRecordClasses(`.
+
 ### `ir.config_parameter.get_param` / `set_param` are gone
 
 Both methods exist at 19.0 (`odoo/addons/base/models/ir_config_parameter.py`) and are **absent**
@@ -379,6 +504,25 @@ icp.set_bool("my.flag", True)   # or set_str if the value is really a string
 Do not keep `safe_eval(get_param(..., "False"))` for a boolean — that is the 19.0 string
 convention. Call `get_bool`. A leftover `get_param` is an `AttributeError` at runtime, not a
 silent miss.
+
+`get_str(key, default)` does **not** use `default` when the key exists as `""`.
+`_get` returns None / `INVALID_VALUE` only (`ir_config_parameter.py:124-129` at the pin);
+a stored empty string is returned as-is. Settings inverses write `""` when the
+m2m is empty. `safe_eval("")` is `SyntaxError`. Observed `20_4` Gx.8 portal vault
+after login (`odoo_password_manager.pw_custom_portal_fields`). Same leftover on
+PWM mass-action / duplicate-field lists and File Manager
+`cloud_base.ir_actions_server_ids`. Successor:
+
+```python
+# BEFORE — 500 when the param is stored empty
+safe_eval(Config.get_str("odoo_password_manager.pw_custom_portal_fields", "[]"))
+# AFTER
+safe_eval(Config.get_str("odoo_password_manager.pw_custom_portal_fields", "[]") or "[]")
+```
+
+Checker `python-api` greps `safe_eval(...get_str` without `or`. 19.0 `get_param` of a
+stored empty is also `""` — latent until settings are saved. Do not 20-only change
+the inverse; fix the reader.
 
 ### `Registry.clear_cache` is gone
 
@@ -930,6 +1074,16 @@ reactivity should key a boolean (`ready`), not the tree array. Observed
 already landed — off-proxy alone was not enough; skip-destroy was not
 enough either.
 
+**Do not coerce `jstreeData || []`.** 19.0 `action_get_hierarchy` returns
+`False` / `None` when the optional section is off (PWM `portal_vaults` /
+types dummy; File Manager tags / shares). `[]` is truthy, so `ready` +
+`canUpdate` still paints the header. Successor:
+`this.treeData = Array.isArray(jstreeData) ? jstreeData.slice() : jstreeData`
+and keep the 19.0 `t-if` (`treeData and (length or canUpdate)`). File
+Manager `NodeJsTree` already keeps the sentinel. Observed `20_4` Gx.8
+Portal Vaults header with the setting off. Checker `js-symbol` greps
+`(jstreeData || [])`.
+
 **Do NOT drop the `state` plugin as a fix for that crash.** It was tried
 here and is wrong: `state_ready.jstree` (emitted only by the `state`
 plugin) is what the `check_node`/`changed`/`open_node`/`search` bindings
@@ -1066,13 +1220,13 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `dead-hook` | the hook existed at the **base** ref and is gone at the target — a silent break. Also `_check_access`: the name survives but `check_access` is `@typing.final` (`DEAD_DESPITE_EXISTING`) |
 | `stale-override` | absent at **both** refs — already dead before this port; a defect on the current serie, not porting work |
 | `js-import` | an `@mod/path` import resolving to no file in `odoo` or `enterprise`, or a `loadJS` URL deleted at the target (`/web/static/lib/jquery/jquery.js`) |
-| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`) |
-| `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list) |
+| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`), `archInfo.openAction` (moved to the `KanbanRecord` prop; successor `this.props.openAction`), `.\w+_id[0]` (many2one is `{id, display_name}`; successor `.id`), `...CharField.props` (saas instance `props(charFieldProps)` strips extras; successor `props = props({ ...charFieldProps, extra })`), `config.orderBy = []` then `sortBy` (toggle clears to `defaultOrderBy`; successor `list.load({ orderBy })`), `getRecordClasses(` (saas article class is `getCardClasses`; leftover never runs so `jstr-kanban-selected` never lands), and `(jstreeData || [])` (off-proxy copy must not coerce `False`/`None`; optional-section header stays painted) |
+| `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` / `contains(@class)` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`; `o_form_button_save` left `web.FormView.Buttons` for `web.FormView.DialogButtons`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
-| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`) |
+| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `t-if` / `t-elif` ident (`t-if="projectUser"`), a bare `t-props="viewProps"` / `modalRef="modalRef"`, a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`) |
 | `qweb-tcall` | first-child `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` on a `t-call` — saas-19.4 slot only |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), or a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), or `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`) |
 | `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
 | `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
@@ -1153,7 +1307,38 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
   regex then missed `panelState.collapsed`, `env.isSmall`,
   `t-att-class="panelClass"`, and `update.bind="handleChange"` (`20_5`
   Gx.8 first-click). The kind now flags `*State.` / `env.` / bare bind /
-  bare `t-att-*` / bare `t-on-click` idents.
+  bare `t-att-*` / bare `t-on-click` idents / a whole-expression
+  `t-if="projectUser"` (`20_4` Gx.8 systray) / a bare
+  `t-props="viewProps"` (`20_4` Gx.8 PasswordLoginDialog).
+- **`static props = { ...CharField.props }` is not the saas schema.**
+  saas `CharField` is instance `props = props(charFieldProps)` and
+  strips unknown keys. A leftover static spread never keeps `logIn`
+  (`20_4` PasswordCopy regenerate on login). Checker `js-symbol`
+  greps `...CharField.props`. Successor is `props = props({
+  ...charFieldProps, extra: t.boolean().optional() })`.
+- **`config.orderBy = []` then `sortBy` is not a new order.**
+  `DynamicList.orderBy` is `config.orderBy`. saas `sortBy` toggles;
+  a pre-written `asc=false` first term becomes `[]` / `defaultOrderBy`.
+  PWM Sort by did nothing (`20_4` Gx.8). Successor `list.load({
+  orderBy })`. Checker `js-symbol` greps `config.orderBy = []`.
+- **`getRecordClasses()` is not the saas card class.** saas
+  `KanbanRecord` extends `CardRenderer`; the article uses
+  `this.getCardClasses()`. A leftover `getRecordClasses` never
+  runs (`20_4` PWM / `20_14` File Manager checkbox). Successor
+  `getCardClasses()`. Checker `js-symbol` greps `getRecordClasses(`.
+  KPI already used `getCardClasses`.
+- **`safe_eval(get_str(..., "[]"))` is not the default.** saas
+  `get_str` ignores `default` when the key exists as `""`
+  (`ir_config_parameter.py:124-129`). Settings inverse writes
+  empty. `safe_eval("")` is `SyntaxError` (`20_4` Gx.8 portal
+  vault after login). Successor `or "[]"`. Checker `python-api`.
+- **`(jstreeData || [])` is not the 19.0 optional-section hide.**
+  19.0 `action_get_hierarchy` returns `False` / `None` when the
+  feature is off. Off-proxy copy that coerces to `[]` makes
+  `ready` + `canUpdate` paint the header (`20_4` Portal Vaults
+  with the setting off). Successor: copy only arrays; keep the
+  19.0 `t-if`. File Manager `NodeJsTree` already keeps the
+  sentinel. Checker `js-symbol` greps `(jstreeData || [])`.
 - **A class token on the parent is not an exact `class="…"` inherit.** OWL
   `applyInheritance` matches the opening-tag attribute string.
   `<div class="o_calendar_sidebar" position="inside">` does not match saas
@@ -1215,6 +1400,14 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
   reads target `security/ir.access.csv` for models this module domains.
   An `_access_domain` override on that model is the successor when the
   other module is not a hard depend (`20_6` location / demo + salesman).
+- **`hasclass()` is not `contains(@class)`.** OWL inherit XPath in this
+  hub uses both. Indexing only `hasclass()` reported the PWM login
+  inherit of `web.FormView.Buttons` clean while Save had already left
+  that `t-name`. `owl-xpath` now indexes `contains(@class, …)` the same
+  way (`20_4` Gx.8 login footer).
+- **`record.data.bundle_id[0]` is not a named import.** `js-symbol` on
+  exports missed it. saas `browse` then asserts `Invalid falsy real id`.
+  Checker greps `.\w+_id[0]` (`20_4` PasswordCopy / kanban).
 
 ## Verify at runtime, not from this rule
 
@@ -1349,8 +1542,9 @@ without evidence does not belong in this rule.
   `state` / `props`. Core saas `web.KanbanRenderer` writes `this.state`.
   Prefixed the inherit expressions. Next compile error was
   `ctx.getCloudManagerNavigationProps is not a function` — same `this.`
-  on `t-props`. Checker `owl-this` also flags `t-props="getX()"` without
-  `this.`.
+  on `t-props`. Checker `owl-this` flags `t-props="getX()"` without
+  `this.` **and** a bare ident `t-props="viewProps"` (`20_4`
+  PasswordLoginDialog — View then has no `resModel`).
 - *(2026-09-15, `20_14` Gx.8)* Opening a contact chatter attachment box died
   with `Element '<button t-elif="canDownload(attachment)" …>' cannot be
   located`. The button is still on `mail.AttachmentList`; saas writes
@@ -1532,3 +1726,113 @@ without evidence does not belong in this rule.
   `t-out="title"` and `#{id}`. OWL 3 compile scope is `this`.
   Checker `owl-this` now flags bare `t-out` / `t-esc` idents and
   `#{name}` interpolations.
+- *(2026-09-17, `20_4` Gx.8)* Task Numbers systray search never
+  rendered. `t-if="projectUser"` is a whole-expression bare ident —
+  OWL 3 compile scope is `this`, so the input stayed hidden even
+  though `onWillStart` set `this.projectUser` for Project users.
+  Successor: `t-if="this.projectUser"`. Checker `owl-this` now
+  flags `t-if` / `t-elif` whose value is only `ident` / `!ident`
+  (`true` / `false` / `this.` stay quiet). Retro-scan of
+  `20_2` / `20_c` / `20_14` / `20_5` / `20_6` / `20_9` / `20_10`
+  / `20_port`: only this file.
+- *(2026-09-17, `20_4` Gx.8)* Password Manager first-clicks died
+  on two leftover 19.0 OWL/JS shapes the checker had reported
+  clean. Bundle card:
+  `archInfo.openAction.action` — saas moved `openAction` onto the
+  `KanbanRecord` prop (`kanban_renderer.xml:53`; record `:237`).
+  All passwords login dialog:
+  `<View t-props="viewProps"/>` — OWL 3 does not bind the bare
+  ident, so `View.setup` raised `View props should have a
+  "resModel" key` even though JS set `this.viewProps.resModel`.
+  Successor: `this.props.openAction` (keep `buttonContext`) and
+  `t-props="this.viewProps"` / `modalRef="this.modalRef"` (saas
+  `web.FormViewDialog`). Checker `js-symbol` greps
+  `archInfo.openAction`; `owl-this` now flags a bare
+  `t-props="ident"` / `modalRef="ident"`. Retro-scan of
+  `20_2` / `20_c` / `20_14` / `20_5` / `20_6` / `20_9` / `20_10`
+  / `20_port`: only these two files.
+- *(2026-09-17, `20_4` Gx.8)* Password Manager login still showed
+  Save / Discard, Enter did not log in, copy / regenerate stayed
+  visible, and eye / copy died `Invalid falsy real id` on
+  `password.bundle`. Three leftover 19.0 shapes: (1) inherit of
+  `web.FormView.Buttons` — saas dialogs use
+  `buttonDialogTemplate` / `web.FormView.DialogButtons`;
+  (2) `this.props.logIn` dropped by saas `CharField` `props()` so
+  the login widget treated the field as a normal password;
+  (3) `bundle_id[0]` — many2one is `{id, display_name}`, so the
+  security RPC browsed `[undefined]`. Successor: inherit
+  `DialogButtons` + pass `buttonDialogTemplate`; read `log_in`
+  from `activeFields.attrs`; `value.id` (and filter falsy ids
+  before `orm.call`). Checker `owl-xpath` now indexes
+  `contains(@class)`; `js-symbol` greps `.\w+_id[0]`. Retro-scan
+  of `20_2` / `20_c` / `20_14` / `20_5` / `20_6` / `20_9` /
+  `20_10` / `20_port`: only these PWM files.
+- *(2026-09-17, `20_4` Gx.8)* After DialogButtons, login still showed
+  regenerate and Enter did not log in. `static props = {
+  ...CharField.props, logIn }` does not keep extras: saas
+  `CharField` uses instance `props = props(charFieldProps)` and
+  strips unknown keys. `activeFields.attrs.log_in` was also empty
+  at runtime. Successor: `props = props({ ...charFieldProps,
+  logIn: t.boolean().optional() })` (enterprise
+  `AccountAuditClickableCharField`). Checker `js-symbol` greps
+  `...CharField.props`. Retro-scan of `20_2` / `20_c` / `20_14` /
+  `20_5` / `20_6` / `20_9` / `20_10` / `20_port`: only this file.
+- *(2026-09-17, `20_4` Gx.8)* All Passwords Sort by did nothing.
+  PWM wrote `config.orderBy` (`asc=false`) then `sortBy(fieldName)`.
+  `orderBy` is that same array; saas `sortBy` toggles a desc first
+  term to `[]` and reloads `defaultOrderBy` (name). Successor:
+  `kanbanList.load({ orderBy })`. File Manager already `_load`s.
+  Checker `js-symbol` greps `config.orderBy = []`. Retro-scan of
+  `20_2` / `20_c` / `20_14` / `20_5` / `20_6` / `20_9` / `20_10` /
+  `20_port`: no leftover. Same walk: Portal Vaults empty because
+  `action_get_hierarchy` needs `group_portal_password_vaults`;
+  Layer 1 rows existed; Gx.5 wiring never implied the group onto
+  `base.group_user` / `base.group_portal`. Stamp that in
+  `_demo_pwm_stamp_settings`.
+- *(2026-09-17, `20_4` Gx.9 review)* After Sort by used `this.asc`,
+  jstree `onUpdateSearch` still passed `asc: !this.asc` (the 19.0
+  `sortBy` toggle convention). Checking a folder then reloaded the
+  opposite order. Successor: `asc: this.asc` on
+  `toggleJSTreeDomain` too. Checker `js-symbol` greps
+  `asc: !this.asc`. Retro-scan: only this PWM file.
+- *(2026-09-17, `20_4` Gx.8)* Selected PWM cards had no checked box.
+  saas `KanbanRecord` is a `CardRenderer`; the article class is
+  `this.getCardClasses()` (`kanban_record.js:120`). Leftover
+  `getRecordClasses()` never ran, so `jstr-kanban-selected` never
+  landed and CSS never swapped `.fa-square-o` → `.fa-check-square-o`.
+  Same leftover on File Manager `20_14` / `20_port`. KPI already
+  used `getCardClasses`. Successor: override `getCardClasses()`.
+  Checker `js-symbol` greps `getRecordClasses(`. Same walk: demo
+  still saw Sales `Google Adsense` after Access Groups
+  Administrator because `password_key_read_rule` excepts the
+  bundle creator and Full/Admin; Layer 2 had stamped 0user as
+  both. Restriction itself is green (a non-creator readonly user
+  is denied). Successor: `_demo_pwm_stamp_sales_access_story`
+  (Sales 0user readonly, Sales `create_uid` admin, stamp
+  `demo_key_adsense_sales` with `base.group_system`).
+- *(2026-09-17, `20_4` Gx.8)* Portal vault login 500 after
+  `action_check_entered_password` 200. GET of
+  `/my/password_vaults/<slug>` hit `_get_custom_fields` →
+  `safe_eval(Config.get_str("odoo_password_manager.pw_custom_portal_fields", "[]"))`
+  → `SyntaxError: invalid syntax`. Stored ICP is `""` (settings
+  inverse when the m2m is empty). saas `get_str` default is unused
+  when the key exists (`ir_config_parameter.py:124-129`). Same
+  leftover on PWM mass-action / duplicate lists and File Manager
+  `cloud_base.ir_actions_server_ids` (`20_14` / `20_port`).
+  Successor: `safe_eval(get_str(...) or "[]")`. Checker
+  `python-api`. Retro-scan of `20_2` / `20_c` / `20_5` / `20_6` /
+  `20_9` / `20_10`: no leftover.
+- *(2026-09-17, `20_4` Gx.8)* Portal Vaults header stayed on All
+  Passwords after Settings "Portal vaults" was unchecked. 19.0
+  `action_get_hierarchy("portal_vaults")` returns `False` without
+  the group; `t-if="state.treeData and …"` hid the section. The
+  off-proxy port did `jstreeData || []` and
+  `t-if="ready and (length or canUpdate)"` — `[]` is truthy and
+  admin `canUpdate` paints the header. Same leftover would show
+  Types when `odoo_password_manager_custom_types` is absent
+  (`_return_types_nodes` is `None`). File Manager
+  `NodeJsTree` already keeps `None` (`clouds_node` tags/shares).
+  Successor: copy only arrays; restore the 19.0 `t-if`. Checker
+  `js-symbol` greps `(jstreeData || [])`. Retro-scan of `20_2` /
+  `20_c` / `20_14` / `20_5` / `20_6` / `20_9` / `20_10` /
+  `20_port`: only this PWM file.

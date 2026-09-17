@@ -26,8 +26,10 @@ phase-1 analysis proved are findable statically:
                (letters stay in crud order: cr not rc)
   js-symbol         a named import whose file still exists but the export does not
   owl-xpath         an OWL t-inherit XPath selecting @t-ref / @t-esc on a core
-                    template, or hasclass() of a class that left the inherited
-                    t-name (o-kanban-button-new left web.KanbanView), or a
+                    template, or hasclass() / contains(@class) of a class that
+                    left the inherited t-name (o-kanban-button-new left
+                    web.KanbanView; o_form_button_save left web.FormView.Buttons
+                    for web.FormView.DialogButtons), or a
                     position= tag whose t-if/t-elif/t-else value is not on
                     that t-name (canDownload vs this.canDownload), or a
                     position= / @class= inherit whose exact class="…" string
@@ -37,6 +39,8 @@ phase-1 analysis proved are findable statically:
   owl-this          a t-inherit / standalone / xml` OWL template still uses
                     a bare OWL-3 scope name (state. / panelState. / env. /
                     props. / model.), a bare getter (t-att-class="panelClass"),
+                    a bare t-if/t-elif ident (t-if="projectUser"),
+                    a bare t-props="viewProps" / modalRef="modalRef",
                     or a bare method bind (update.bind="handleChange",
                     t-on-click="clear", or t-on-keydown="(event) => foo()")
   qweb-tcall        inner t-set of a t-call (breadcrumbs_searchbar / object /
@@ -50,6 +54,8 @@ phase-1 analysis proved are findable statically:
                     or a leftover tools.ormcache (use odoo.api.ormcache)
                     or a named import that left odoo.http
                     (Stream / content_disposition)
+                    or safe_eval(get_str(...)) without `or` (stored empty
+                    skips the default; successor get_str(...) or "[]")
   calendar-attr     a <calendar date_delay=...> — gone from RNG and
                     FIELD_ATTRIBUTE_NAMES at saas-19.4; drop the attribute
   qweb-tesc         t-esc / t-raw in a non-static XML arch (ir.ui.view);
@@ -218,6 +224,14 @@ OWL_TNAME_OPEN_RE = re.compile(
 )
 OWL_TINHERIT_RE = re.compile(r'\bt-inherit="([^"]+)"')
 OWL_HASCLASS_RE = re.compile(r"""hasclass\(\s*['"]([^'"]+)['"]\s*\)""")
+# 19.0 PWM login inherited web.FormView.Buttons with contains(@class, 'o_form_button_save').
+# saas moved Save to web.FormView.DialogButtons; FormView.Buttons is only New.
+OWL_CONTAINS_CLASS_RE = re.compile(
+    r"""contains\(\s*@class\s*,\s*['"]([^'"]+)['"]\s*\)"""
+)
+# saas record.data many2one is {id, display_name}. Leftover .bundle_id[0] is
+# undefined → browse AssertionError: Invalid falsy real id (20_4 Gx.8 PWM).
+MANY2ONE_INDEX0_RE = re.compile(r"\.\w+_id\[0\]")
 # OWL 3 compiled templates no longer bind `state` / `props` / `model` as
 # bare names — nor `panelState` / `env` (20_5 Gx.8 KPI + calendar).
 # Core inherit targets write this.state / this.props / this.env.
@@ -232,7 +246,13 @@ OWL_BARE_CALL_RE = re.compile(
 # Getters and methods used as a bare ident: t-att-class="panelClass",
 # t-on-click="clear". Arrow / this. values are excluded.
 OWL_BARE_ATTR_IDENT_RE = re.compile(
-    r"""\b(?:t-att-class|t-att-style|t-out|t-esc|t-on-click(?:\.\w+)?)=["'](?!this\.|[\(\[])([A-Za-z_]\w*)["']"""
+    r"""\b(?:t-att-class|t-att-style|t-out|t-esc|t-props|modalRef|t-on-click(?:\.\w+)?)=["'](?!this\.|[\(\[])([A-Za-z_]\w*)["']"""
+)
+# t-if="projectUser" / t-elif="!ready" — OWL 3 compile scope is this.
+# The whole-expression bare ident is undefined (20_4 Gx.8 task_numbers
+# systray search never rendered). this. and true/false stay quiet.
+OWL_BARE_TIF_IDENT_RE = re.compile(
+    r"""\bt-(?:if|elif)=["']!?((?!this\.)(?!(?:true|false)\b)[A-Za-z_]\w*)["']"""
 )
 # t-attf-id="jstr_input_#{id}" — OWL 3 interpolation is this.id
 # (20_4 pwm_jstree_container; search input vs onMounted getElementById).
@@ -1222,6 +1242,60 @@ GONE_JS_CALLS = {
         "(saas static_list.js:455) which applies x2ManyCommands.SET "
         "and _onUpdate. Do not wrap a second mutex — set() already does."
     ),
+    "archInfo.openAction": (
+        "KanbanRecord.openAction left archInfo at saas-19.4 "
+        "(19.0 kanban_record.js:291; saas :237 reads this.props.openAction). "
+        "Renderer passes openAction=\"this.props.archInfo.openAction\". "
+        "Leftover archInfo.openAction.action is undefined.action "
+        "(20_4 BundleKanbanRecord). Successor: this.props.openAction. "
+        "Keep a module-specific buttonContext on doActionButton."
+    ),
+    "...CharField.props": (
+        "saas CharField uses instance props = props(charFieldProps) "
+        "which strips unknown keys. Leftover static props = "
+        "{ ...CharField.props, extra } never keeps extra "
+        "(20_4 PasswordCopy logIn — regenerate stayed on login, "
+        "Enter did not submit). Successor: props = props({ "
+        "...charFieldProps, extra: t.boolean().optional() }) "
+        "like account_reports AccountAuditClickableCharField."
+    ),
+    "config.orderBy = []": (
+        "DynamicList.orderBy is config.orderBy. Writing that array "
+        "then sortBy(fieldName) toggles: a pre-written asc=false "
+        "first term clears orderBy back to defaultOrderBy, so Sort "
+        "by does nothing (20_4 PasswordNavigation). Successor: "
+        "list.load({ orderBy: [{name, asc}, {name: 'id', asc: true}] }). "
+        "File Manager already uses _load. Other ported groups have "
+        "no leftover .sortBy(."
+    ),
+    "asc: !this.asc": (
+        "19.0 PWM passed asc: !this.asc into updateOrderBy because "
+        "sortBy toggled. After the saas successor list.load({orderBy}) "
+        "uses this.asc, a leftover !this.asc on toggleJSTreeDomain "
+        "reloads the opposite direction when a jstree node is "
+        "checked (20_4 Gx.9 Bugbot). Successor: pass this.asc on "
+        "every order notify. Retro-scan of ported groups: only PWM."
+    ),
+    "getRecordClasses(": (
+        "saas-19.4 KanbanRecord extends CardRenderer; the article "
+        "class is this.getCardClasses() (kanban_record.js:120). "
+        "getRecordClasses is gone. Leftover override never runs so "
+        "jstr-kanban-selected never lands and the top-right "
+        "checkbox stays empty (20_4 PasswordKanbanRecord, 20_14 "
+        "CloudManagerKanbanRecord). Successor: getCardClasses(). "
+        "KPI already used getCardClasses."
+    ),
+    "(jstreeData || [])": (
+        "Off-proxy jstree copy must not coerce False/None. 19.0 "
+        "action_get_hierarchy returns False when the optional "
+        "section is off (PWM portal_vaults / types dummy; File "
+        "Manager tags/shares). [] is truthy, so ready + canUpdate "
+        "still paints the header (20_4 Portal Vaults with the "
+        "setting off). Successor: Array.isArray(jstreeData) ? "
+        "jstreeData.slice() : jstreeData, and keep the 19.0 "
+        "t-if (treeData and (length or canUpdate)). File Manager "
+        "NodeJsTree already keeps the sentinel."
+    ),
 }
 
 # Data xmlids that left the 19.0 module. view-xmlid only sees inherit_id.
@@ -1248,6 +1322,14 @@ def check_gone_js_paths(module: str, rel: str, src: str) -> list[Finding]:
         for token, hint in GONE_JS_CALLS.items():
             if token in line:
                 out.append(Finding("js-symbol", module, rel, lineno, f"{token} {hint}"))
+        if MANY2ONE_INDEX0_RE.search(line):
+            out.append(Finding(
+                "js-symbol", module, rel, lineno,
+                "record.data many2one is {id, display_name} at 19.0 and saas-19.4; "
+                "value[0] is undefined. saas browse asserts Invalid falsy real id "
+                "(20_4 PasswordCopy / PasswordKanbanRecord). Successor: value.id "
+                "(keep a [id, name] fallback if the value can still be an array).",
+            ))
     return out
 
 
@@ -1369,7 +1451,16 @@ def _owl_this_extra_findings(src: str, rel: str, module: str, off: int, body: st
             "owl-this", module, rel, lineno,
             f"{where} template uses bare {am.group(1)!r} as an attribute. "
             f"OWL 3 compile scope is this.{am.group(1)} "
-            f"(panelClass / panelStyle / t-on-click=\"clear\").",
+            f"(panelClass / t-props=\"viewProps\" / modalRef / "
+            f"t-on-click=\"clear\"; 20_4 PasswordLoginDialog).",
+        ))
+    for tm in OWL_BARE_TIF_IDENT_RE.finditer(body):
+        lineno = src.count("\n", 0, off) + body[:tm.start()].count("\n") + 1
+        out.append(Finding(
+            "owl-this", module, rel, lineno,
+            f"{where} template uses t-if/t-elif={tm.group(1)!r} without this. "
+            f"Successor: t-if=\"this.{tm.group(1)}\" "
+            f"(systray search never rendered; 20_4 task_numbers).",
         ))
     for bm in OWL_BARE_BIND_RE.finditer(body):
         lineno = src.count("\n", 0, off) + body[:bm.start()].count("\n") + 1
@@ -1502,10 +1593,32 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                 hint = ""
                 if cls == "o-kanban-button-new" and inherit == "web.KanbanView":
                     hint = " Successor: inherit web.KanbanView.Buttons (core did)."
+                if cls == "o_form_button_save" and inherit == "web.FormView.Buttons":
+                    hint = (
+                        " Successor: inherit web.FormView.DialogButtons and pass "
+                        "buttonDialogTemplate (saas moved Save off FormView.Buttons)."
+                    )
                 out.append(Finding(
                     "owl-xpath", module, rel, lineno,
                     f"t-inherit XPath hasclass({cls!r}) is not in {inherit} at "
                     f"the target ref.{hint}",
+                ))
+            for cm in OWL_CONTAINS_CLASS_RE.finditer(body):
+                cls = cm.group(1)
+                if cls in known:
+                    continue
+                lineno = src.count("\n", 0, off) + body[:cm.start()].count("\n") + 1
+                hint = ""
+                if cls == "o_form_button_save" and inherit == "web.FormView.Buttons":
+                    hint = (
+                        " Successor: inherit web.FormView.DialogButtons and pass "
+                        "buttonDialogTemplate (saas form_view.js buttonDialogTemplate; "
+                        "20_4 PasswordLoginDialog still showed Save)."
+                    )
+                out.append(Finding(
+                    "owl-xpath", module, rel, lineno,
+                    f"t-inherit XPath contains(@class, {cls!r}) is not in {inherit} "
+                    f"at the target ref.{hint}",
                 ))
     for full, rel in walk(repo, module, ".js"):
         src = read(full)
@@ -1566,6 +1679,10 @@ def _http_import_names(clause: str) -> list[str]:
 
 TOOLS_ORMCACHE_RE = re.compile(r"tools\.ormcache\s*\(")
 REQUEST_WEBSITE_RE = re.compile(r"request\.website\b")
+# saas get_str default is unused when the key exists as "" (settings inverse).
+# safe_eval("") is SyntaxError — 20_4 Gx.8 portal vault after login.
+SAFE_EVAL_GET_STR_RE = re.compile(r"safe_eval\(\s*\w+\.get_str\s*\(")
+GET_STR_CALL_RE = re.compile(r"\w+\.get_str\s*\(")
 # 19.0 _order_field_to_sql(..., query); saas-19.4 dropped query (20_4 Gx.6).
 ORDER_FIELD_QUERY_DEF_RE = re.compile(
     r"def\s+_order_field_to_sql\s*\([^)]*\bquery\b"
@@ -1624,9 +1741,11 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
     pats = {name: re.compile(rf"\.{re.escape(name)}\s*\(") for name in REMOVED_PYTHON_CALLS}
     for full, rel in walk(repo, module, ".py"):
         src = read(full)
+        prev_stripped = ""
         for lineno, line in enumerate(src.splitlines(), 1):
             stripped = line.lstrip()
             if stripped.startswith("#"):
+                prev_stripped = stripped
                 continue
             for name, why in REMOVED_PYTHON_CALLS.items():
                 if pats[name].search(line):
@@ -1644,6 +1763,25 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                     "(ir_http no longer assigns request.website). Observed 20_9 "
                     "Gx.7 AttributeError on jsonrpc website=True routes.",
                 ))
+            get_str_after = line.split("get_str", 1)[-1] if "get_str" in line else ""
+            leftover_eval_get_str = (
+                SAFE_EVAL_GET_STR_RE.search(line)
+                and " or " not in get_str_after
+            )
+            leftover_split_eval_get_str = (
+                GET_STR_CALL_RE.search(line)
+                and prev_stripped.rstrip().endswith("safe_eval(")
+                and " or " not in get_str_after
+            )
+            if leftover_eval_get_str or leftover_split_eval_get_str:
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "safe_eval(get_str(...)): saas get_str default is unused "
+                    "when the key exists as \"\" (settings inverse). "
+                    "safe_eval(\"\") is SyntaxError. Successor "
+                    "safe_eval(icp.get_str(key, \"[]\") or \"[]\"). "
+                    "Observed 20_4 Gx.8 portal vault after login.",
+                ))
             if ORDER_FIELD_QUERY_DEF_RE.search(line):
                 out.append(Finding(
                     "python-api", module, rel, lineno,
@@ -1660,6 +1798,7 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                     "is _order_to_sql(table, order). Get table from "
                     "_as_query().table or _search(...).table.",
                 ))
+            prev_stripped = stripped
         for m in HTTP_FROM_RE.finditer(src):
             lineno = src.count("\n", 0, m.start()) + 1
             for name in _http_import_names(m.group(1)):
