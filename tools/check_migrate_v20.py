@@ -1268,6 +1268,17 @@ GONE_JS_CALLS = {
         "...charFieldProps, extra: t.boolean().optional() }) "
         "like account_reports AccountAuditClickableCharField."
     ),
+    "...FormController.props": (
+        "saas FormController uses instance props = "
+        "props(formControllerProps) and strips unknown keys. "
+        "Leftover static props = { ...FormController.props, "
+        "refreshReport } never keeps the callbacks "
+        "(20_11 SalesForecastFormController — Refresh / Save / "
+        "Export die 'is not a function'). Successor: "
+        "props = props({ ...formControllerProps, extra: "
+        "t.function().optional() }) like mrp_workorder "
+        "WorkorderFormController."
+    ),
     "config.orderBy = []": (
         "DynamicList.orderBy is config.orderBy. Writing that array "
         "then sortBy(fieldName) toggles: a pre-written asc=false "
@@ -1476,11 +1487,25 @@ def _owl_sidebar_hint(inherit: str, exact: str) -> str:
     return ""
 
 
+OWL_T_AS_RE = re.compile(r"""\bt-as=["']([A-Za-z_]\w*)["']""")
+OWL_T_SET_RE = re.compile(r"""\bt-set=["']([A-Za-z_]\w*)["']""")
+
+
+def _owl_template_locals(body: str) -> set[str]:
+    """t-as / t-set names stay compile-scope locals (core foreach aliases)."""
+    names = set(OWL_T_AS_RE.findall(body))
+    names.update(OWL_T_SET_RE.findall(body))
+    return names
+
+
 def _owl_this_extra_findings(src: str, rel: str, module: str, off: int, body: str, inherit: str) -> list[Finding]:
     """Bare getter / bind / t-on-click idents. OWL 3 compile scope is this.*."""
     out: list[Finding] = []
     where = "t-inherit" if inherit else "OWL"
+    locals_ = _owl_template_locals(body)
     for am in OWL_BARE_ATTR_IDENT_RE.finditer(body):
+        if am.group(1) in locals_:
+            continue
         lineno = src.count("\n", 0, off) + body[:am.start()].count("\n") + 1
         out.append(Finding(
             "owl-this", module, rel, lineno,
@@ -1490,6 +1515,8 @@ def _owl_this_extra_findings(src: str, rel: str, module: str, off: int, body: st
             f"t-on-click=\"clear\"; 20_4 PasswordLoginDialog).",
         ))
     for tm in OWL_BARE_TIF_IDENT_RE.finditer(body):
+        if tm.group(1) in locals_:
+            continue
         lineno = src.count("\n", 0, off) + body[:tm.start()].count("\n") + 1
         out.append(Finding(
             "owl-this", module, rel, lineno,
@@ -1514,6 +1541,8 @@ def _owl_this_extra_findings(src: str, rel: str, module: str, off: int, body: st
             f"(Invalid handler expression; 20_5 KPI formula).",
         ))
     for im in OWL_BARE_INTERP_RE.finditer(body):
+        if im.group(1) in locals_:
+            continue
         lineno = src.count("\n", 0, off) + body[:im.start()].count("\n") + 1
         out.append(Finding(
             "owl-this", module, rel, lineno,
