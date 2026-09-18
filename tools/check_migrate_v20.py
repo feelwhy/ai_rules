@@ -56,6 +56,10 @@ phase-1 analysis proved are findable statically:
                     (Stream / content_disposition)
                     or safe_eval(get_str(...)) without `or` (stored empty
                     skips the default; successor get_str(...) or "[]")
+                    or leftover _notify_thread(..., msg_vals=) (method
+                    exists; kwargs must be in
+                    _get_notify_valid_parameters; successor
+                    write message.partner_ids + notify_skip_followers)
   calendar-attr     a <calendar date_delay=...> — gone from RNG and
                     FIELD_ATTRIBUTE_NAMES at saas-19.4; drop the attribute
   qweb-tesc         t-esc / t-raw in a non-static XML arch (ir.ui.view);
@@ -710,9 +714,10 @@ def _owl_position_directive_triples(body: str):
         tag, attrs = match.group(1), match.group(2)
         if "position=" not in attrs:
             continue
-        dm = OWL_DIR_ATTR_RE.search(attrs)
-        if dm:
-            yield match.start(), tag, dm.group(1), dm.group(2)[1:-1]
+        # xpath expr="//i[@t-if='…']" is a predicate on the target node, not
+        # a t-if on the <xpath> tag. OWL_DIR_ATTR_RE would match inside expr
+        # and report (xpath, t-if, …) as missing on the parent (20_suite
+        # mail.Message isEmpty).
         if tag == "xpath":
             expr_m = re.search(r'\bexpr="([^"]+)"', attrs)
             if not expr_m:
@@ -720,6 +725,10 @@ def _owl_position_directive_triples(body: str):
             pred = OWL_XPATH_DIR_PRED_RE.search(expr_m.group(1))
             if pred:
                 yield match.start(), pred.group(1), pred.group(2), pred.group(3)
+            continue
+        dm = OWL_DIR_ATTR_RE.search(attrs)
+        if dm:
+            yield match.start(), tag, dm.group(1), dm.group(2)[1:-1]
 
 
 # ------------------------------------------------------------------ repo side
@@ -1285,7 +1294,7 @@ GONE_JS_CALLS = {
         "CloudManagerKanbanRecord). Successor: getCardClasses(). "
         "KPI already used getCardClasses."
     ),
-    "(jstreeData || [])": (
+        "(jstreeData || [])": (
         "Off-proxy jstree copy must not coerce False/None. 19.0 "
         "action_get_hierarchy returns False when the optional "
         "section is off (PWM portal_vaults / types dummy; File "
@@ -1295,6 +1304,32 @@ GONE_JS_CALLS = {
         "jstreeData.slice() : jstreeData, and keep the 19.0 "
         "t-if (treeData and (length or canUpdate)). File Manager "
         "NodeJsTree already keeps the sentinel."
+    ),
+    "self_partner": (
+        "store.self_partner is gone at saas-19.4. Successor is "
+        "store.self (self_user.partner_id || self_guest) "
+        "(store_service.js get self). Leftover .eq(this.store.self_partner) "
+        "is undefined.eq (20_suite Send privately prefill)."
+    ),
+    "store.emojiLoader": (
+        "mail.store.emojiLoader is gone at saas-19.4 "
+        "(19.0 store_service.js:124). Successor is the "
+        "emojiLoader singleton from "
+        "@web/core/emoji_picker/emoji_loader "
+        "(saas message_model.js richBody). Leftover "
+        "this.store.emojiLoader.loaded is undefined.loaded "
+        "(20_suite Discuss / message_edit richBody). "
+        "Call emojiLoader.load() then decorateEmojis — do "
+        "not read store.emojiLoader. Rewriting the "
+        "loadEmoji import is not enough."
+    ),
+    "history.addStep": (
+        "HistoryPlugin.addStep is gone at saas-19.4. The "
+        "shared plugin API is commit / stash / unstash / "
+        "undo / redo. Leftover "
+        "this.dependencies.history.addStep() is "
+        "not a function (20_suite Cite). Successor: "
+        "this.dependencies.history.commit()."
     ),
 }
 
@@ -1535,6 +1570,17 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                     f"OWL 3 compile scope is ctx; methods are this.{cm.group(1)}().",
                 ))
             out.extend(_owl_this_extra_findings(src, rel, module, off, body, inherit))
+            if inherit == "mail.Chatter" and "RecipientsInput" in body:
+                lineno = src.count("\n", 0, off) + body[: body.find("RecipientsInput")].count("\n") + 1
+                out.append(Finding(
+                    "owl-xpath", module, rel, lineno,
+                    "t-inherit mail.Chatter still xpaths RecipientsInput. "
+                    "saas moved To:/Cc: onto mail.ChatterComposer "
+                    "(chatter/web/composer_patch.xml). Successor: inherit "
+                    "mail.ChatterComposer and patch Composer for the "
+                    "checkbox handler. additionalRecipients need "
+                    "recipient_type ('to'/'cc') or RecipientsInput hides them.",
+                ))
             if inherit and inherit in parent_dirs:
                 known_dirs = parent_dirs[inherit]
                 for doff, tag, attr, val in _owl_position_directive_triples(body):
@@ -1797,6 +1843,40 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                     "_order_to_sql(order, query) is the 19.0 call; saas-19.4 "
                     "is _order_to_sql(table, order). Get table from "
                     "_as_query().table or _search(...).table.",
+                ))
+            if "compute=lambda self: self._compute_res_access" in line:
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "res_access_* compute=lambda: Odoo treats the lambda as "
+                    "the compute and Field.depends=\"name\" iterates "
+                    "characters (ValueError: field 'm' not found). "
+                    "Successor: named _compute_res_access_<op> + "
+                    "@api.depends(...) like cloud_base. Observed 20_suite "
+                    "Gx.6 message.edit.history.",
+                ))
+            if re.search(r'^\s+depends="[A-Za-z_]', line):
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "Field depends=\"name\" is iterated as characters. "
+                    "Use @api.depends(\"name\") on a named compute.",
+                ))
+            leftover_notify_msg_vals = (
+                "msg_vals=" in line
+                and ("_notify_thread" in line or "_notify_thread" in prev_stripped)
+            )
+            if leftover_notify_msg_vals:
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "_notify_thread(..., msg_vals=): saas dropped that "
+                    "kwarg (mail_thread.py _notify_thread is "
+                    "(self, message, **kwargs); valid keys are "
+                    "_get_notify_valid_parameters). Leftover raises "
+                    "ValueError: Those values are not supported when "
+                    "posting or notifying: msg_vals (20_suite Route). "
+                    "Successor: write message.partner_ids, then "
+                    "_notify_thread(..., notify_skip_followers=True, "
+                    "notify_author=True, force_send=True); restore "
+                    "partner_ids after.",
                 ))
             prev_stripped = stripped
         for m in HTTP_FROM_RE.finditer(src):

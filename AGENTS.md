@@ -2441,13 +2441,13 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `dead-hook` | the hook existed at the **base** ref and is gone at the target — a silent break. Also `_check_access`: the name survives but `check_access` is `@typing.final` (`DEAD_DESPITE_EXISTING`) |
 | `stale-override` | absent at **both** refs — already dead before this port; a defect on the current serie, not porting work |
 | `js-import` | an `@mod/path` import resolving to no file in `odoo` or `enterprise`, or a `loadJS` URL deleted at the target (`/web/static/lib/jquery/jquery.js`) |
-| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`), `archInfo.openAction` (moved to the `KanbanRecord` prop; successor `this.props.openAction`), `.\w+_id[0]` (many2one is `{id, display_name}`; successor `.id`), `...CharField.props` (saas instance `props(charFieldProps)` strips extras; successor `props = props({ ...charFieldProps, extra })`), `config.orderBy = []` then `sortBy` (toggle clears to `defaultOrderBy`; successor `list.load({ orderBy })`), `getRecordClasses(` (saas article class is `getCardClasses`; leftover never runs so `jstr-kanban-selected` never lands), and `(jstreeData || [])` (off-proxy copy must not coerce `False`/`None`; optional-section header stays painted) |
-| `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` / `contains(@class)` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`; `o_form_button_save` left `web.FormView.Buttons` for `web.FormView.DialogButtons`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list) |
+| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`), `archInfo.openAction` (moved to the `KanbanRecord` prop; successor `this.props.openAction`), `.\w+_id[0]` (many2one is `{id, display_name}`; successor `.id`), `...CharField.props` (saas instance `props(charFieldProps)` strips extras; successor `props = props({ ...charFieldProps, extra })`), `config.orderBy = []` then `sortBy` (toggle clears to `defaultOrderBy`; successor `list.load({ orderBy })`), `asc: !this.asc` (19.0 sortBy-toggle leftover after `load({orderBy})` uses `this.asc`; successor pass `this.asc` on jstree notify too), `getRecordClasses(` (saas article class is `getCardClasses`; leftover never runs so `jstr-kanban-selected` never lands), `(jstreeData || [])` (off-proxy copy must not coerce `False`/`None`; optional-section header stays painted), `store.emojiLoader` (19.0 `mail.store` field; saas successor is the `emojiLoader` singleton — leftover `.loaded` is `undefined.loaded`), and `history.addStep` (HistoryPlugin shared API is `commit`; leftover `this.dependencies.history.addStep` is not a function) |
+| `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` / `contains(@class)` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`; `o_form_button_save` left `web.FormView.Buttons` for `web.FormView.DialogButtons`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list), **or** `RecipientsInput` still inherited from `mail.Chatter` (successor `mail.ChatterComposer`) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
 | `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `t-if` / `t-elif` ident (`t-if="projectUser"`), a bare `t-props="viewProps"` / `modalRef="modalRef"`, a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`) |
 | `qweb-tcall` | first-child `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` on a `t-call` — saas-19.4 slot only |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), or `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), or leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`) |
 | `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
 | `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
@@ -2560,6 +2560,27 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
   with the setting off). Successor: copy only arrays; keep the
   19.0 `t-if`. File Manager `NodeJsTree` already keeps the
   sentinel. Checker `js-symbol` greps `(jstreeData || [])`.
+- **`store.emojiLoader` is not the named import.** Rewriting
+  `loadEmoji` to `emojiLoader` from `emoji_loader` still leaves
+  `this.store.emojiLoader.loaded`. saas `mail.store` dropped that
+  field (19.0 `store_service.js:124`). Discuss then dies
+  `undefined.loaded` (`20_suite` Gx.8). Successor:
+  `emojiLoader.load()` then `decorateEmojis` like core
+  `message_model.js:48-51`. Checker `js-symbol` greps
+  `store.emojiLoader`.
+- **`history.addStep` is not a named import.** saas HistoryPlugin
+  shared API is `commit` / `stash` / `unstash`. Leftover
+  `this.dependencies.history.addStep()` is not a function
+  (`20_suite` Cite). Checker `js-symbol` greps `history.addStep`.
+- **`_notify_thread(..., msg_vals=)` is not a gone method.** The
+  name survives; saas kwargs must be in
+  `_get_notify_valid_parameters()` (`force_send`,
+  `notify_author`, `notify_skip_followers`, … — not `msg_vals`).
+  Leftover raises `ValueError: Those values are not supported
+  when posting or notifying: msg_vals` (`20_suite` Route).
+  Successor: write `message.partner_ids`, then
+  `_notify_thread(..., notify_skip_followers=True)`. Checker
+  `python-api` greps `msg_vals=` next to `_notify_thread`.
 - **A class token on the parent is not an exact `class="…"` inherit.** OWL
   `applyInheritance` matches the opening-tag attribute string.
   `<div class="o_calendar_sidebar" position="inside">` does not match saas
@@ -3057,6 +3078,58 @@ without evidence does not belong in this rule.
   `js-symbol` greps `(jstreeData || [])`. Retro-scan of `20_2` /
   `20_c` / `20_14` / `20_5` / `20_6` / `20_9` / `20_10` /
   `20_port`: only this PWM file.
+- *(2026-09-17, `20_suite` Gx.3)* `RecipientsInput` left `mail.Chatter`.
+  saas To:/Cc: live on `mail.ChatterComposer`
+  (`chatter/web/composer_patch.xml`). A leftover `//RecipientsInput`
+  on `mail.Chatter` dies at compile. Successor: inherit
+  `mail.ChatterComposer`, put the checkbox handler on `Composer`
+  (`this.webComposerProps.thread`), keep Chatter
+  `toggleComposer` / `onPostCallback`. Push
+  `additionalRecipients` with `recipient_type: "to"` or the input
+  filters them out. `store.self_partner` is `store.self`.
+  `mail.Message` shadowBody / empty-body: xpath `hasclass`
+  (`o-mail-Message-shadowBody`, `text-muted`+`opacity-75`), not
+  `@t-ref` / `@t-if` (checker `owl-xpath` flags `@t-ref`; a
+  `@t-if` inside `expr=` used to false-positive as the `<xpath>`
+  tag's own directive — skip `OWL_DIR_ATTR_RE` on `xpath`).
+  Checker `owl-xpath` RecipientsInput-on-Chatter + `js-symbol`
+  `self_partner`.
+- *(2026-09-17, `20_suite` Gx.6)* `message.edit.history` `res_access_*`
+  used `compute=lambda self: self._compute_res_access("read")` plus
+  `depends="message_id"`. saas `Field.depends` iterates a string as
+  characters → `ValueError: Dependency field 'm' not found` at
+  `-i`. Successor matches `cloud_base`: named
+  `_compute_res_access_read` / `_write` / `_create` / `_unlink` with
+  `@api.depends("message_id")`. Checker `python-api` flags the
+  lambda and a Field `depends="name"` kwarg.
+- *(2026-09-18, `20_suite` Gx.8)* Discuss first-click died
+  `TypeError: Cannot read properties of undefined (reading 'loaded')`
+  at `Proxy.compute`. Mechanical port rewrote `loadEmoji` to
+  `emojiLoader` from `@web/core/emoji_picker/emoji_loader` but left
+  `this.store.emojiLoader.loaded`. saas `mail.store` has no
+  `emojiLoader` (19.0 `store_service.js:124`). Core richBody is
+  `emojiLoader.load(); return decorateEmojis(this.body) ?? ""`
+  (`message_model.js:48-51` at pin). The checker grepped the
+  named import only. Successor: drop the store field. Checker
+  `js-symbol` greps `store.emojiLoader`. Retro-scan of `20_2` /
+  `20_c` / `20_14` / `20_5` / `20_6` / `20_9` / `20_10` /
+  `20_4` / `20_port`: only this file.
+- *(2026-09-18, `20_suite` Gx.8)* Route died
+  `ValueError: Those values are not supported when posting or
+  notifying: msg_vals`. saas `_notify_thread(self, message,
+  **kwargs)` still exists; `msg_vals` is not in
+  `_get_notify_valid_parameters`. Recipients come from
+  `message.partner_ids` when `notify_skip_followers`. Successor:
+  temporary `partner_ids` write + restore. Checker `python-api`
+  greps `msg_vals=` next to `_notify_thread`. Retro-scan of
+  `20_2` / `20_c` / `20_14` / `20_5` / `20_6` / `20_9` /
+  `20_10` / `20_4` / `20_12` / `20_port`: no leftover.
+- *(2026-09-18, `20_suite` Gx.8)* Cite died
+  `this.dependencies.history.addStep is not a function`.
+  saas HistoryPlugin shared API is `commit`. Successor:
+  `this.dependencies.history.commit()`. Checker `js-symbol`
+  greps `history.addStep`. Retro-scan of already-ported
+  groups: only `message_citing`.
 
 ## 30-command-vocabulary
 
