@@ -1390,6 +1390,12 @@ def _order_field_to_sql(self, table, field_expr, direction, nulls):
     return super()._order_field_to_sql(table, field_expr, direction, nulls)
 ```
 
+Do **not** call `_field_to_sql(table, field_expr)`. saas `_field_to_sql`
+first arg is a **string alias**; passing TableSQL rebuilds
+`TableSQL(alias, …)` and asserts `isinstance(alias, str)` (`query.py:297`).
+Observed `20_15` Gx.7 `knowsystem.article` search `order="name asc"`.
+Checker `python-api` greps `_field_to_sql(table,`.
+
 Tests that called `_order_to_sql(order, records._as_query(...)).code` become
 `_order_to_sql(query.table, order)._sql_tuple[0]` (saas `LiteralSQL` has no
 `.code`). Checker `python-api` flags a leftover `query` on the def and a
@@ -1613,6 +1619,24 @@ is fine). Checker `owl-xpath` now indexes `contains(@class, …)` the
 same way as `hasclass()`; `o_form_button_save` on `web.FormView.Buttons`
 is the hint.
 
+### FormController `static template` must stay `web.FormView`
+
+saas `FormController` still has `static template = "web.FormView"`
+(`form_controller.js`). That template holds the sheet, notebook, and
+`t-call="{{ this.props.buttonTemplate }}"`. Extra form buttons belong
+on `buttonTemplate` (inherit `web.FormView.Buttons`).
+
+A leftover `static template = "knowsystem.KnowSystemFormView"` that
+points at a `FormView.Buttons` inherit **replaces the whole form**
+with the button strip. The sheet never mounts. Observed `20_15`
+Gx.7: every article tour died `Timeout waiting for .knowsystem-editor`
+because the Content page was only New / Create from template.
+
+Successor: drop `static template` on the FormController subclass;
+keep `buttonTemplate` on the view. Checker `js-symbol` flags a
+`extends FormController` file whose `static template` is not
+`web.FormView`.
+
 ### `record.data.<many2one>[0]` is undefined — use `.id`
 
 The relational model stores a many2one as `{id, display_name}` at
@@ -1652,6 +1676,30 @@ props = props({ ...charFieldProps, logIn: t.boolean().optional() });
 ```
 
 Checker `js-symbol` greps `...CharField.props`.
+
+### `static props = { ...IntegerField.props }` does not keep extras
+
+Same hole as CharField. saas `IntegerField` is instance
+`props = props(integerFieldProps)` (`integer_field.js`). Leftover
+`static props = { ...IntegerField.props, icon, action, likeState }`
+never keeps extras, so a like widget template that reads
+`this.props.icon` renders a bare number.
+
+Observed `20_15` Gx.8: article likes showed `0 0` with no thumbs.
+Successor:
+
+```js
+import { props, t } from "@odoo/owl";
+import { IntegerField, integerFieldProps } from "@web/views/fields/integer/integer_field";
+props = props({
+    ...integerFieldProps,
+    icon: t.string(),
+    action: t.string(),
+    likeState: t.string(),
+});
+```
+
+Checker `js-symbol` greps `...IntegerField.props`.
 
 ### Writing `config.orderBy` then `sortBy` clears the sort
 
@@ -2023,6 +2071,25 @@ views (kanban, card, and enterprise `gantt`) and rejects `t-esc`. Observed
 `static/src` templates may keep `t-esc`. Checker kind `qweb-tesc` (skips
 `/static/`).
 
+### `type="base64" file="…"` is deprecated in data and demo XML
+
+saas-19.4 `convert.py` (`:145-148`) warns
+`Since 20.0, use type=bytes instead of type=base64` on **every** file-backed field load, and the
+log gate attributes that warning to our module. Core saas has **zero** `type="base64"` left:
+`hr_recruitment` loads `ir.attachment.raw` and `event` loads `image_1920` both with
+`type="bytes"`.
+
+```xml
+<!-- BEFORE -->
+<field name="raw" type="base64" file="knowsystem/static/demo/site_survey_form.pdf"/>
+<!-- AFTER -->
+<field name="raw" type="bytes" file="knowsystem/static/demo/site_survey_form.pdf"/>
+```
+
+On `ir.attachment.raw` it is also the wrong payload — `raw` takes bytes, not base64 (see
+**`ir.attachment.datas` removed**). Applies to plain image fields (`image_1920`) too. Checker kind
+is `data-base64`.
+
 ### Named inherit anchors: check the node, not just the view
 
 A core view surviving under the same xmlid does **not** mean the node you hook onto survived.
@@ -2112,8 +2179,10 @@ first `t-call`) and the slot later set the flag for `portal.portal_searchbar`
     <t t-call="portal.portal_searchbar" breadcrumbs_searchbar="True" title.translate="Quotations"/>
 ```
 
-Checker kind `qweb-tcall` flags a first-child `t-set` of `breadcrumbs_searchbar`
-/ `object` / `token` / `title`. Observed `20_14` Gx.8 token share.
+Checker kind `qweb-tcall` flags an inner `t-set` of `breadcrumbs_searchbar`
+/ `object` / `token` / `title` / `size` / `mobileSize` (not only the first
+child). Observed `20_14` Gx.8 token share and `20_15` Gx.7 snippet palette
+(`10 - size` with `size is None`).
 
 ### `website.default_website` moved to `base.default_website`
 
@@ -2441,15 +2510,16 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `dead-hook` | the hook existed at the **base** ref and is gone at the target — a silent break. Also `_check_access`: the name survives but `check_access` is `@typing.final` (`DEAD_DESPITE_EXISTING`) |
 | `stale-override` | absent at **both** refs — already dead before this port; a defect on the current serie, not porting work |
 | `js-import` | an `@mod/path` import resolving to no file in `odoo` or `enterprise`, or a `loadJS` URL deleted at the target (`/web/static/lib/jquery/jquery.js`) |
-| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`), `archInfo.openAction` (moved to the `KanbanRecord` prop; successor `this.props.openAction`), `.\w+_id[0]` (many2one is `{id, display_name}`; successor `.id`), `...CharField.props` (saas instance `props(charFieldProps)` strips extras; successor `props = props({ ...charFieldProps, extra })`), `...FormController.props` (saas instance `props(formControllerProps)` strips extras; leftover `refreshReport` is not a function — successor `props = props({ ...formControllerProps, extra })`), `config.orderBy = []` then `sortBy` (toggle clears to `defaultOrderBy`; successor `list.load({ orderBy })`), `asc: !this.asc` (19.0 sortBy-toggle leftover after `load({orderBy})` uses `this.asc`; successor pass `this.asc` on jstree notify too), `getRecordClasses(` (saas article class is `getCardClasses`; leftover never runs so `jstr-kanban-selected` never lands), `(jstreeData || [])` (off-proxy copy must not coerce `False`/`None`; optional-section header stays painted), `store.emojiLoader` (19.0 `mail.store` field; saas successor is the `emojiLoader` singleton — leftover `.loaded` is `undefined.loaded`), `history.addStep` (HistoryPlugin shared API is `commit`; leftover `this.dependencies.history.addStep` is not a function), and `record.data.id` (saas FormRecord does not put `id` in `data`; leftover browse is `Invalid falsy real id` — successor `record.resId`) |
+| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`), `archInfo.openAction` (moved to the `KanbanRecord` prop; successor `this.props.openAction`), `.\w+_id[0]` (many2one is `{id, display_name}`; successor `.id`), `...CharField.props` (saas instance `props(charFieldProps)` strips extras; successor `props = props({ ...charFieldProps, extra })`), `...FormController.props` (saas instance `props(formControllerProps)` strips extras; leftover `refreshReport` is not a function — successor `props = props({ ...formControllerProps, extra })`), `config.orderBy = []` then `sortBy` (toggle clears to `defaultOrderBy`; successor `list.load({ orderBy })`), `asc: !this.asc` (19.0 sortBy-toggle leftover after `load({orderBy})` uses `this.asc`; successor pass `this.asc` on jstree notify too), `getRecordClasses(` (saas article class is `getCardClasses`; leftover never runs so `jstr-kanban-selected` never lands), `(jstreeData || [])` (off-proxy copy must not coerce `False`/`None`; optional-section header stays painted), `store.emojiLoader` (19.0 `mail.store` field; saas successor is the `emojiLoader` singleton — leftover `.loaded` is `undefined.loaded`), `history.addStep` (HistoryPlugin shared API is `commit`; leftover `this.dependencies.history.addStep` is not a function), and `record.data.id` (saas FormRecord does not put `id` in `data`; leftover browse is `Invalid falsy real id` — successor `record.resId`), and FormController `static template` that is not `web.FormView` (a leftover pointing at a FormView.Buttons inherit replaces the sheet with the button strip — `20_15` `.knowsystem-editor` timeout; successor drop `static template`, keep `buttonTemplate` on the view), and `htmlFieldProps` (saas HtmlField is `static props`; leftover `props = props({ ...htmlFieldProps, extra })` strips `record` — `20_15` `getNoMoreCommit is not a function`; successor `static props = { ...HtmlField.props, extra }` like mass_mailing), leftover `o_editable_selectors` (successor `savable_selectors`; without `.o_savable` the iframe is never contenteditable — `20_15` backend builder save), leftover `clean_for_save_handlers` (successor `clean_for_save_processors`), and a custom HtmlBuilder that never sets `builderOptionsTemplate` (`OwlError Missing template: "undefined"` — successor `"<module>.BuilderOptions"` like mass_mailing), leftover `...IntegerField.props` (successor `props = props({ ...integerFieldProps, extra })` — `20_15` likes showed a bare number), leftover `resources.builder_options` on a `website-plugins`-only file (saas Customize reads `website-options` plus an inherit of `website.BuilderOptions` at `page_options_hook` — `20_15` KnowSystem / Documentation Customize empty) |
 | `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` / `contains(@class)` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`; `o_form_button_save` left `web.FormView.Buttons` for `web.FormView.DialogButtons`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list), **or** `RecipientsInput` still inherited from `mail.Chatter` (successor `mail.ChatterComposer`) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
-| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `t-if` / `t-elif` ident (`t-if="projectUser"`), a bare `t-props="viewProps"` / `modalRef="modalRef"`, a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`), or a PascalCase child `prop="prop"` (`<TimeTableTable timeTableId="timeTableId"/>` — successor `this.timeTableId`; `20_7` timetable open). Quiet for names introduced by `t-as` / `t-set` in that template (`20_11` forecast foreach aliases; `OMMItem oMenu="oMenu"`) |
-| `qweb-tcall` | first-child `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` on a `t-call` — saas-19.4 slot only |
+| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `t-if` / `t-elif` ident (`t-if="projectUser"`), a bare `t-props="viewProps"` / `modalRef="modalRef"`, a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`), or a PascalCase child `prop="prop"` (`<TimeTableTable timeTableId="timeTableId"/>` — successor `this.timeTableId`; `20_7` timetable open). Indexes inherit-only `<t t-inherit>` with no `t-name` (`20_15` multilang `state.uniqueId`). Quiet for names introduced by `t-as` / `t-set` in that template (`20_11` forecast foreach aliases; `OMMItem oMenu="oMenu"`) |
+| `qweb-tcall` | inner `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` / `size` / `mobileSize` on a `t-call` — saas-19.4 slot only. `size`/`mobileSize` on a snippet item is `10 - None` (`20_15` KnowSystem palette) |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), or leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`), or `"web_icon_data": self.web_icon_data` (saas Binary is `BinaryValue`; jsonrpc `.content.decode()` dies on PNG `0x89`; successor `bool(icon)`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), leftover `_field_to_sql(table,` (saas first arg is a string alias — successor `table.<field>`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), or leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`), or `"web_icon_data": self.web_icon_data` (saas Binary is `BinaryValue`; jsonrpc `.content.decode()` dies on PNG `0x89`; successor `bool(icon)`) |
 | `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
 | `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
+| `data-base64` | `<field type="base64" file="…"/>` in data/demo XML — saas `convert.py` deprecates it and the gate blames our module; successor `type="bytes"`. On `ir.attachment.raw` it is also the wrong payload |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
 | `patch-shadow` | a `patch(X.prototype, …)` member that upstream declares as a **class field** on the patched class or an ancestor — an own instance property shadows it, so it never runs, on any serie |
 | `view-xmlid` | an `inherit_id` ref to a core view that no longer exists, **or** a leftover `website.default_website` (tests included — successor `base.default_website`) |
@@ -2516,6 +2586,42 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
 - **A surviving JS file is not a surviving export.** `js-import` asks whether `@mod/path`
   resolves. `Deferred` left `concurrency.js` in place and still broke 158 core call sites.
   `js-symbol` reads the named import against that file's `export` list.
+  `html_editor/fields/html_field.js` is often unreadable
+  (cursorignore → `exported is None` → skip), so leftover
+  `htmlFieldProps` hid (`20_15` KnowSystemHtml). Grep
+  `htmlFieldProps` in `GONE_JS_CALLS` as well.
+- **`o_editable_selectors` is not a named import.** saas
+  SetupEditorPlugin reads `savable_selectors` and stamps
+  `.o_savable`; `isValidContentEditable` requires
+  `closest(".o_savable")`. Leftover
+  `o_editable_selectors` never makes the iframe
+  contenteditable (`20_15` backend builder save). Same
+  for leftover `clean_for_save_handlers` (successor
+  `clean_for_save_processors`). Checker `js-symbol`
+  greps both.
+- **A surviving HtmlBuilder is not a surviving options
+  template.** saas `BuilderOptionsPlugin` does
+  `renderToElement(this.config.builderOptionsTemplate)`.
+  Leftover custom builder dies `Missing template:
+  "undefined"` (`20_15`). Checker flags
+  `@html_builder/builder` + `builderProps` without
+  `builderOptionsTemplate`.
+- **Leftover website `builder_options` is not Customize.** saas
+  website Customize reads `registry.category("website-options")`
+  plus an inherit of `website.BuilderOptions` at
+  `page_options_hook` (`website_blog` `blog_page_option`).
+  Leftover `resources.builder_options` on a
+  `website-plugins`-only file is ignored, so Customize says
+  "select a block" (`20_15` KnowSystem / Documentation).
+  Switchable inherit views are not auto-listed — they need
+  `BuilderCheckbox action="'websiteConfig'"`. Checker
+  `js-symbol` flags that leftover.
+- **`static props = { ...IntegerField.props }` is the CharField
+  hole.** saas `IntegerField` is instance
+  `props = props(integerFieldProps)` and strips extras. A
+  leftover static spread never keeps `icon` / `action` /
+  `likeState` (`20_15` likes showed a bare number). Checker
+  `js-symbol` greps `...IntegerField.props`.
 - **A `loadJS` URL is not an `@mod/path`.** `js-import` never saw
   `/web/static/lib/jquery/jquery.js`. saas-19.4 deleted the file; File Manager
   then died with `AssetsLoadingError` after the xpath was already clean.
@@ -2524,7 +2630,9 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
   `this`. Core saas templates already write `this.state`. `owl-this` scans
   inherit bodies, standalone OWL templates (`t-props="getX()"`), **and**
   `xml\`...\`` literals in JS. A file-only `t-name` walk missed portal
-  `jsTreePortal` (`t-if="state.treeData"`). A `state|props|model`-only
+  `jsTreePortal` (`t-if="state.treeData"`). A `t-name`-only span walk then
+  missed inherit-only templates with no `t-name` (`20_15` multilang
+  `t-key="state.uniqueId"` → `undefined.uniqueId`). A `state|props|model`-only
   regex then missed `panelState.collapsed`, `env.isSmall`,
   `t-att-class="panelClass"`, and `update.bind="handleChange"` (`20_5`
   Gx.8 first-click). The kind now flags `*State.` / `env.` / bare bind /
@@ -2594,8 +2702,12 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
 - **Inner `t-set` of a `t-call` is the slot, not the callee.** 19.0 forced
   `str(qwebContent)` when the call had only `t-*` attrs plus child `t-set`
   (`is_deprecated_version`). saas-19.4 deleted that. Checker `qweb-tcall`
-  flags a first-child `t-set` of `breadcrumbs_searchbar` / `object` /
-  `token` / `title`. Sale writes those as `t-call` attributes.
+  flags an inner `t-set` of `breadcrumbs_searchbar` / `object` /
+  `token` / `title` / `size` / `mobileSize` (not only the first child —
+  KnowSystem `s_pricelist_boxed_item` set `name` first, then `size`).
+  Sale writes those as `t-call` attributes. A leftover `10 - size`
+  with `size is None` dies while `html_builder` renders the snippet
+  palette (`20_15` Gx.7).
 - **A surviving method name is not a surviving inherit.** OWL `applyInheritance`
   matches the opening-tag attribute string. `t-elif="canDownload(attachment)"`
   does not match saas `t-elif="this.canDownload(attachment)"`. `hasclass()`
@@ -3188,6 +3300,163 @@ without evidence does not belong in this rule.
   `report.url=http://127.0.0.1:8069` on every gx8
   (`env-gx8-filestore.sh`). Bundle
   `web.report_assets_common` still exists.
+- *(2026-09-19, `20_15` Gx.7)* Article `order="name asc"` died
+  `AssertionError: isinstance(alias, str)` at
+  `TableSQL.__init__`. Leftover `_field_to_sql(table,
+  field_expr)` — saas `_field_to_sql` first arg is a
+  string alias and rebuilds TableSQL. Successor
+  `table.name` / `table[field_expr]` (mailing / PWM).
+  Checker `python-api` greps `_field_to_sql(table,`.
+  Same run: saas `get_current_website()` default
+  `fallback=None` no longer returns the first website
+  (19.0 default was `True`). HttpCase setUpClass writes
+  to an empty recordset; `/knowsystem` and `/docs` stay
+  403. Successor: `get_current_website(fallback=True)`
+  or `env.ref("base.default_website")`.
+- *(2026-09-19, `20_15` Gx.7)* Article form died
+  `Timeout waiting for .knowsystem-editor`. Leftover
+  `static template = "knowsystem.KnowSystemFormView"`
+  on a FormController subclass pointed at a
+  `web.FormView.Buttons` inherit — saas
+  `FormController.template` is still `web.FormView`
+  and that is the sheet. Successor: drop
+  `static template`; keep `buttonTemplate` on the
+  view. Same run: jstree `_renderJsTree` must rebind
+  `this.jsTreeAnchor` after `_destroyJsTree` (null
+  host); leftover `t-esc` on OWL like/sort templates
+  is a deprecation WARNING; documentation
+  Interaction `$(sel)` is `window.jQuery` after
+  `loadJS` (ES module has no `$`);
+  `@website_sale/interactions/product_page` is gone
+  — FAQ is its own Interaction
+  `selector = "#knowsystem_faq"`. Checker
+  `js-symbol` FormController `static template`.
+- *(2026-09-19, `20_15` Gx.7)* After the form-template drop,
+  the editor died `TypeError: Cannot read properties of
+  undefined (reading 'uniqueId')` at
+  `KnowSystemEditor.template_knowsystem_KnowSystemEditor`.
+  `knowsystem_multilang` inherits
+  `knowsystem.KnowSystemEditor` with **no** `t-name` and
+  leftover `t-key="state.uniqueId"` /
+  `t-foreach="state.availableLanguages"`. OWL 3 compile
+  scope is `this`; `state` is undefined. `_owl_template_spans`
+  only walked `t-name` opens, so `owl-this` reported clean.
+  Successor: `this.state.*`; index inherit-only
+  `<t t-inherit>` too. `owl-xpath` hasclass on
+  `web.FormCogMenu` is on `web.CogMenu` — walk the
+  OWL `t-inherit` chain, do not retarget the inherit.
+  Same run: docs search clicked before
+  Interaction `willStart` (`loadJS` jquery) — stamp
+  `data-doc-nav-ready` in `start()` and wait; FAQ
+  `WebsiteSale ready` required
+  `.js_main_product .product_template_id` AND add-to-cart
+  (saas input lives inside
+  `t-if="is_add_to_cart_possible"`). Successor: stamp
+  `data-faq-ready`, take template id from the FAQ
+  `<a t-att-id="product.id">` / `input[name=product_template_id]`,
+  inherit `#o_wsale_product_details_content` (no `/article`).
+- *(2026-09-19, `20_15` Gx.7)* Ace / backend save died
+  `TypeError: this.props.getNoMoreCommit is not a function`
+  and `The backend builder editable did not appear`.
+  saas `HtmlField` is `static props` and does **not**
+  export `htmlFieldProps`. Leftover
+  `props = props({ ...htmlFieldProps, extras })` spreads
+  undefined; instance `props()` then strips `record`.
+  Successor matches mass_mailing
+  `MassMailingHtmlField`: `static props = { ...HtmlField.props,
+  extra }`. Pass extras with
+  `getNoMoreCommit.bind="this.getNoMoreCommit"` and
+  `useChildSubEnv`. Checker `js-symbol` greps
+  `htmlFieldProps`. Same run: mobile TOC
+  `data-bs-toggle="offcanvas"` never added `show` —
+  saas public pages do not run Bootstrap's data-api
+  (website header already uses
+  `Offcanvas.getOrCreateInstance`). Successor: Interaction
+  click + wait `data-doc-nav-ready`.
+- *(2026-09-19, `20_15` Gx.7)* Backend builder still died
+  `The backend builder editable did not appear` after the
+  HtmlField props fix. Same log: `QWebError` on
+  `knowsystem.s_pricelist_boxed_item` —
+  `unsupported operand type(s) for -: 'int' and 'NoneType'`
+  at `col-md-{{10 - size}}` while `html_builder`
+  `render_public_asset` of `knowsystem.knowsystem_snippets`.
+  Inner `t-set` of `size` / `mobileSize` never reached the
+  item (saas slot only). First child was `name`, so a
+  first-child-only `qweb-tcall` reported clean. Successor:
+  `size="3"` / `mobileSize="4"` on the `t-call` tag (and
+  `name` / `price` / `description` the same way);
+  `size or 0` in the item. Checker `qweb-tcall` now matches
+  those keys anywhere inside the `t-call`.
+- *(2026-09-19, `20_15` Gx.7)* After the snippet `t-call` fix,
+  backend editor save died `OwlError Missing template:
+  "undefined"` at
+  `BuilderOptionsPlugin.computeBuilderOptionsFromTemplate`
+  (`html_builder` `builder_options_plugin.js:666` —
+  `renderToElement(this.config.builderOptionsTemplate)`).
+  19.0 `builder_options` / `patch_builder_options` resources
+  are gone; options live in XML (`mass_mailing.BuilderOptions`)
+  plus `registry.category("mass-mailing-options")`. Successor:
+  `builderProps.config.builderOptionsTemplate =
+  "knowsystem.BuilderOptions"` and
+  `builderOptionsRegistry`. Checker `js-symbol` flags a
+  `@html_builder/builder` file with `builderProps` and no
+  `builderOptionsTemplate`.
+- *(2026-09-19, `20_15` Gx.7)* After the options template
+  landed, snippets loaded (`render_public_asset` 200) but
+  the iframe never became editable
+  (`.oe_structure[contenteditable='true']` 30s timeout).
+  Leftover `o_editable_selectors` never adds `.o_savable`;
+  saas `BuilderContentEditablePlugin.isValidContentEditable`
+  requires `closest(".o_savable")`. SetupEditorPlugin
+  reads `savable_selectors` (default only `[data-oe-model]`).
+  Successor matches `mass_mailing_setup_plugin`:
+  `savable_selectors: ".knowsystem_wrapper_td"` and
+  `clean_for_save_processors` (leftover
+  `clean_for_save_handlers` never run). Checker
+  `js-symbol` greps both leftover names.
+- *(2026-09-19, `20_15` challenge review)* Four findings a green Gx.7 did not
+  surface, all in work the port itself introduced. (1) The 19.0 ACL + `ir.rule`
+  pair was folded into **both** `security/ir.access.csv` **and** a converted
+  `security/security.xml`, so every public/portal permission existed twice
+  (14 rows across `knowsystem_website`, `knowsystem_website_custom_fields`,
+  `documentation_builder`). `Domain.OR` of two identical domains hides it at
+  runtime, and no checker kind looks for a redundant permission. Successor: the
+  CSV is the single source — core saas ships 236 `ir.access.csv` files and keeps
+  the domain there; delete the duplicate XML records. Do **not** "fix" it by
+  emptying the CSV domain instead — that is the `access-or` hole. (2)
+  `<t t-set="name">Title</t>` inside a `t-call`, rewritten to the saas `t-call`
+  attribute form as `name="'Title'"`, is a Python expression and **leaves the
+  `.pot`**. `translate.py:119-121` translates only keys ending `.translate` on a
+  `t-call` node, so the successor is `name.translate="Title"` (core `sale` writes
+  `title.translate="Quotations"`). Terms that were already translated
+  (`Comments.` → `Комментарии.`) silently reverted to English; a term with no
+  letters (`$1.00`) was never extracted and stays a plain expression. (3)
+  `type="base64" file=` is deprecated — see **XML / views**. (4) A cross-group
+  test assertion was narrowed from eight modules to four to go green; assert
+  every module that is **reachable** instead, so the companions are covered
+  again the day they are ported rather than needing anyone to remember.
+- *(2026-09-19, `20_15` Gx.8 walk)* Backend likes showed a bare `0 0`. saas
+  `IntegerField` is instance `props = props(integerFieldProps)` and strips
+  extras — leftover `static props = { ...IntegerField.props, icon, action,
+  likeState }` never keeps them. Successor matches CharField:
+  `props = props({ ...integerFieldProps, extra })`. Demo engagement was
+  already loaded (views / likes / contributions on Info); the list view
+  hid those columns and the widget hid the icons. Checker `js-symbol`
+  greps `...IntegerField.props`.
+- *(2026-09-19, `20_15` Gx.8 walk)* Website Customize on KnowSystem /
+  Documentation said "select a block" with no Introduction / Footer
+  toggles. Leftover `resources.builder_options` on a
+  `website-plugins`-only file is not read. saas website options come
+  from `registry.category("website-options")` plus an inherit of
+  `website.BuilderOptions` at `page_options_hook` (`website_blog`
+  `blog_page_option`). Switchable inherit views (`active="True"`
+  Introduction) are not auto-listed — they need
+  `BuilderCheckbox action="'websiteConfig'"`. Docs / article
+  `t-field` that only matched `editor_type == 'website_editor'` left
+  backend_editor / html bodies read-only. Successor: `t-field` when
+  `editor_type in ('website_editor', 'backend_editor', 'html')`.
+  Checker `js-symbol` flags leftover website `builder_options` without
+  `website-options`.
 
 ## 30-command-vocabulary
 

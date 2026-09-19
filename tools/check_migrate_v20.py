@@ -46,8 +46,10 @@ phase-1 analysis proved are findable statically:
                     or a PascalCase child prop="prop"
                     (TimeTableTable timeTableId="timeTableId")
   qweb-tcall        inner t-set of a t-call (breadcrumbs_searchbar / object /
-                    token / title) — saas-19.4 no longer copies those onto the
-                    callee; write a t-call attribute or a controller value
+                    token / title / size / mobileSize) — saas-19.4 no longer
+                    copies those onto the callee; write a t-call attribute or
+                    a controller value. size/mobileSize on a snippet item
+                    dies at 10 - size (None) during html_builder render
   owl-hook          useEffect(fn, deps) from @odoo/owl — OWL 3 ignores the deps array
   python-api        a call to a core method gone at the target
                     (get_param / set_param / Registry.clear_cache /
@@ -67,6 +69,8 @@ phase-1 analysis proved are findable statically:
                     PNG; successor bool(icon))
   calendar-attr     a <calendar date_delay=...> — gone from RNG and
                     FIELD_ATTRIBUTE_NAMES at saas-19.4; drop the attribute
+  data-base64       <field type="base64" file="..."/> in a data/demo XML; saas
+                    deprecates it (convert.py) - successor type="bytes"
   qweb-tesc         t-esc / t-raw in a non-static XML arch (ir.ui.view);
                     saas _validate_qweb_directive forbids them. Use t-out.
   patch-target      a `patch()` on an import path that no longer resolves
@@ -174,6 +178,11 @@ JS_SYMBOL_HINTS = {
         "gone from this module. OWL 3 effect(fn) is not the two-arg helper.",
     ("@html_builder/core/utils", "BaseOptionComponent"):
         "moved to @html_builder/core/base_option_component.",
+    ("@html_editor/fields/html_field", "htmlFieldProps"):
+        "saas HtmlField uses static props and does not export "
+        "htmlFieldProps. Successor: static props = { "
+        "...HtmlField.props, extra } like mass_mailing "
+        "MassMailingHtmlField.",
 }
 
 REMOVED_PYTHON_CALLS = {
@@ -231,6 +240,12 @@ OWL_TNAME_OPEN_RE = re.compile(
     r'<t\b([^>]*\bt-name="([^"]+)"[^>]*)>',
     re.I | re.S,
 )
+# inherit-only OWL templates have no t-name (knowsystem_multilang
+# KnowSystemEditor language select). A t-name walk misses them.
+OWL_TINHERIT_OPEN_RE = re.compile(
+    r'<t\b([^>]*\bt-inherit="([^"]+)"[^>]*)>',
+    re.I | re.S,
+)
 OWL_TINHERIT_RE = re.compile(r'\bt-inherit="([^"]+)"')
 OWL_HASCLASS_RE = re.compile(r"""hasclass\(\s*['"]([^'"]+)['"]\s*\)""")
 # 19.0 PWM login inherited web.FormView.Buttons with contains(@class, 'o_form_button_save').
@@ -284,10 +299,13 @@ OWL_XPATH_CLASS_RE = re.compile(
 # there still dies (portal jsTreePortal).
 OWL_XML_LIT_RE = re.compile(r"\bxml\s*`([\s\S]*?)`")
 # saas-19.4 dropped is_deprecated_version: inner t-set of a t-call is
-# the slot only. First child t-set of these keys never reaches the callee.
+# the slot only. Those keys never reach the callee (first child or later
+# sibling). size/mobileSize on a snippet item is 10 - None at render.
 QWEB_TCALL_INNER_SET_RE = re.compile(
-    r'<t\b[^>]*\bt-call="([^"]+)"[^>]*>\s*<t\b[^>]*\bt-set="'
-    r'(breadcrumbs_searchbar|object|token|title)"',
+    r'<t\b[^>]*\bt-call="([^"]+)"[^>]*>'
+    r'(?:(?!</t>).)*?'
+    r'<t\b[^>]*\bt-set="'
+    r'(breadcrumbs_searchbar|object|token|title|size|mobileSize)"',
     re.S,
 )
 # OWL inherit matches the full opening tag. saas-19.4 prefixed many
@@ -645,6 +663,29 @@ class Target:
                         classes.update(raw.split())
                     out.setdefault(name, set()).update(classes)
         return {name: frozenset(classes) for name, classes in out.items()}
+
+    @lru_cache(maxsize=1)
+    def owl_template_inherit_of(self) -> dict[str, str]:
+        """`t-name` -> `t-inherit` parent at the target (OWL inherit chain)."""
+        out: dict[str, str] = {}
+        for tree in self.trees:
+            seen: set[str] = set()
+            grep_out = tree.grep(r't-name=', "*.xml", raw_paths=True)
+            for line in grep_out.splitlines():
+                parts = line.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                path = parts[1]
+                if "/static/" not in path or path in seen:
+                    continue
+                seen.add(path)
+                src = tree.show(path)
+                if not src:
+                    continue
+                for _off, name, inherit, _body in _owl_template_spans(src):
+                    if inherit and not name.endswith("#extension"):
+                        out[name] = inherit
+        return out
 
     @lru_cache(maxsize=1)
     def owl_template_class_strings(self) -> dict[str, frozenset[str]]:
@@ -1234,7 +1275,101 @@ def check_js(repo: str, module: str, target: Target, own_modules: set[str]) -> l
         out += check_patch_shadow(module, rel, src, target, own_modules)
         out += check_js_symbols(module, rel, src, target, own_modules)
         out += check_gone_js_paths(module, rel, src)
+        out += check_form_controller_template(module, rel, src)
+        out += check_builder_options_template(module, rel, src)
+        out += check_website_leftover_builder_options(module, rel, src)
     return out
+
+
+def check_form_controller_template(module, rel, src):
+    """FormController.static template must stay web.FormView.
+
+    Extra buttons live on buttonTemplate (FormView.Buttons inherit).
+    A leftover static template pointing at that inherit replaces the
+    whole form with the button strip (20_15 KnowSystemFormController:
+    Timeout waiting for .knowsystem-editor).
+    """
+    if "extends FormController" not in src:
+        return []
+    out = []
+    for lineno, line in enumerate(src.splitlines(), 1):
+        if not re.search(r"static\s+template\s*=", line):
+            continue
+        if "web.FormView" in line and "Buttons" not in line and "DialogButtons" not in line:
+            continue
+        out.append(Finding(
+            "js-symbol", module, rel, lineno,
+            "FormController.static template must stay web.FormView. "
+            "A leftover static template pointing at a FormView.Buttons "
+            "inherit (buttonTemplate) renders only New / extra buttons "
+            "and never mounts the sheet (20_15 .knowsystem-editor "
+            "timeout). Successor: drop static template; keep "
+            "buttonTemplate on the view.",
+        ))
+    return out
+
+
+def check_website_leftover_builder_options(module, rel, src):
+    """saas website Customize ignores leftover plugin builder_options.
+
+    Options come from registry.category("website-options") plus an
+    inherit of website.BuilderOptions at page_options_hook
+    (website_blog blog_page_option). Leftover
+    resources.builder_options on a website-plugins-only file is
+    never read, so Customize says "select a block"
+    (20_15 KnowSystem / Documentation).
+    """
+    if "website-plugins" not in src or "website-options" in src:
+        return []
+    if "builder_options:" not in src:
+        return []
+    for lineno, line in enumerate(src.splitlines(), 1):
+        if "builder_options:" in line:
+            return [Finding(
+                "js-symbol", module, rel, lineno,
+                "saas website Customize reads "
+                "registry.category(\"website-options\") plus an "
+                "inherit of website.BuilderOptions at "
+                "page_options_hook (website_blog "
+                "blog_page_option). Leftover "
+                "resources.builder_options on website-plugins "
+                "is ignored (20_15 KnowSystem / Documentation "
+                "Customize empty). Successor: static id "
+                "matching the XML tag, website-options.add, "
+                "inherit website.BuilderOptions.",
+            )]
+    return []
+
+
+def check_builder_options_template(module, rel, src):
+    """A custom html_builder must set config.builderOptionsTemplate.
+
+    saas BuilderOptionsPlugin.computeBuilderOptionsFromTemplate does
+    renderToElement(this.config.builderOptionsTemplate). Undefined is
+    OwlError Missing template: "undefined" (20_15 KnowSystemBuilder —
+    backend editor save). mass_mailing successor:
+    builderProps.config.builderOptionsTemplate = "mass_mailing.BuilderOptions"
+    plus builderOptionsRegistry.
+    """
+    if "@html_builder/builder" not in src or "builderProps" not in src:
+        return []
+    if "builderOptionsTemplate" in src:
+        return []
+    for lineno, line in enumerate(src.splitlines(), 1):
+        if "builderProps" in line:
+            return [Finding(
+                "js-symbol", module, rel, lineno,
+                "saas BuilderOptionsPlugin renders "
+                "this.config.builderOptionsTemplate "
+                "(html_builder builder_options_plugin.js:666). "
+                "Leftover custom HtmlBuilder that never sets it dies "
+                "OwlError Missing template: \"undefined\" "
+                "(20_15 KnowSystemBuilder). Successor: "
+                "builderProps.config.builderOptionsTemplate = "
+                "\"<module>.BuilderOptions\" and "
+                "builderOptionsRegistry like mass_mailing.",
+            )]
+    return []
 
 
 # Static URLs that 19.0 loadJS / loadCSS still hit and that saas-19.4 deleted.
@@ -1272,6 +1407,16 @@ GONE_JS_CALLS = {
         "Enter did not submit). Successor: props = props({ "
         "...charFieldProps, extra: t.boolean().optional() }) "
         "like account_reports AccountAuditClickableCharField."
+    ),
+    "...IntegerField.props": (
+        "saas IntegerField uses instance props = "
+        "props(integerFieldProps) and strips unknown keys. "
+        "Leftover static props = { ...IntegerField.props, "
+        "icon, action, likeState } never keeps extras so the "
+        "like widget renders a bare number "
+        "(20_15 LikeButtonField). Successor: "
+        "props = props({ ...integerFieldProps, icon: t.string(), "
+        "action: t.string(), likeState: t.string() })."
     ),
     "...FormController.props": (
         "saas FormController uses instance props = "
@@ -1357,6 +1502,42 @@ GONE_JS_CALLS = {
         "filter falsy o2m line ids. Also prefix this. on "
         "the OWL getter pass (timeTableId=\"timeTableId\" "
         "is undefined in OWL 3)."
+    ),
+    "htmlFieldProps": (
+        "saas HtmlField uses static props = { "
+        "...standardFieldProps, ... } and does not export "
+        "htmlFieldProps (html_editor/fields/html_field.js). "
+        "Leftover props = props({ ...htmlFieldProps, extra }) "
+        "spreads undefined; instance props() then strips "
+        "record (20_15 KnowSystemHtml — getNoMoreCommit is "
+        "not a function; backend builder editable did not "
+        "appear). Successor: static props = { "
+        "...HtmlField.props, extra } like mass_mailing "
+        "MassMailingHtmlField. html_field.js is often "
+        "unreadable to the named-export check "
+        "(cursorignore → exported is None → skip)."
+    ),
+    "o_editable_selectors": (
+        "saas SetupEditorPlugin reads savable_selectors "
+        "(html_builder setup_editor_plugin.js:15, :25; "
+        "mass_mailing_setup_plugin.js:8). Leftover "
+        "o_editable_selectors never adds .o_savable; "
+        "BuilderContentEditablePlugin.isValidContentEditable "
+        "requires closest('.o_savable') so the iframe stays "
+        "not contenteditable (20_15 backend builder save "
+        "waited 30s for .oe_structure[contenteditable=true]). "
+        "Successor: savable_selectors: '.knowsystem_wrapper_td' "
+        "(or the module wrapper, like mass_mailing "
+        "'.o_mail_wrapper_td')."
+    ),
+    "clean_for_save_handlers": (
+        "saas successor is clean_for_save_processors(root) "
+        "that returns the root (html_builder "
+        "setup_editor_plugin.js:23; mass_mailing "
+        "customize_mailing_plugin.js:30). Leftover handlers "
+        "never run (20_15 KnowSystemSetupPlugin / "
+        "CustomizeKnowSystemPlugin). Bind or "
+        "(root) => this.cleanForSave(root)."
     ),
 }
 
@@ -1482,14 +1663,42 @@ def check_js_symbols(module: str, rel: str, src: str, target: Target,
 
 
 def _owl_template_spans(src: str):
-    """Yield `(offset, t-name, t-inherit or '', body)` per OWL `t-name` in `src`."""
-    opens = list(OWL_TNAME_OPEN_RE.finditer(src))
+    """Yield `(offset, t-name, t-inherit or '', body)` per OWL template in `src`.
+
+    Index `t-name` opens **and** inherit-only `<t t-inherit>` with no
+    `t-name` (`20_15` multilang `state.uniqueId` — OWL 3 compile is
+    `undefined.uniqueId`).
+    """
+    named = list(OWL_TNAME_OPEN_RE.finditer(src))
+    named_starts = {match.start() for match in named}
+    inherit_only = [
+        match for match in OWL_TINHERIT_OPEN_RE.finditer(src)
+        if match.start() not in named_starts and "t-name=" not in match.group(1)
+    ]
+    opens = sorted(named + inherit_only, key=lambda match: match.start())
     for i, match in enumerate(opens):
-        attrs, name = match.group(1), match.group(2)
-        inherit_m = OWL_TINHERIT_RE.search(attrs)
-        inherit = inherit_m.group(1) if inherit_m else ""
+        attrs = match.group(1)
+        if match.re is OWL_TNAME_OPEN_RE:
+            name = match.group(2)
+            inherit_m = OWL_TINHERIT_RE.search(attrs)
+            inherit = inherit_m.group(1) if inherit_m else ""
+        else:
+            inherit = match.group(2)
+            name = inherit + "#extension"
         end = opens[i + 1].start() if i + 1 < len(opens) else len(src)
         yield match.start(), name, inherit, src[match.end():end]
+
+
+def _owl_chain_union(index: dict, inherit_of: dict[str, str], name: str):
+    """Union index values along the OWL `t-inherit` parent chain."""
+    acc: set = set()
+    seen: set[str] = set()
+    walk = name
+    while walk and walk not in seen:
+        seen.add(walk)
+        acc.update(index.get(walk, ()))
+        walk = inherit_of.get(walk)
+    return acc
 
 
 def _owl_sidebar_hint(inherit: str, exact: str) -> str:
@@ -1597,6 +1806,7 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
     parent_classes = target.owl_template_classes() if target is not None else {}
     parent_class_strs = target.owl_template_class_strings() if target is not None else {}
     parent_dirs = target.owl_template_directives() if target is not None else {}
+    inherit_of = target.owl_template_inherit_of() if target is not None else {}
     out: list[Finding] = []
     for full, rel in walk(repo, module, ".xml"):
         rel_posix = rel.replace(os.sep, "/")
@@ -1649,8 +1859,9 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                     "checkbox handler. additionalRecipients need "
                     "recipient_type ('to'/'cc') or RecipientsInput hides them.",
                 ))
-            if inherit and inherit in parent_dirs:
-                known_dirs = parent_dirs[inherit]
+            if inherit:
+                known_dirs = _owl_chain_union(parent_dirs, inherit_of, inherit)
+            if inherit and known_dirs:
                 for doff, tag, attr, val in _owl_position_directive_triples(body):
                     if (tag, attr, val) in known_dirs:
                         continue
@@ -1666,8 +1877,9 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                         f"t-inherit {tag} {attr}={val!r} is not on {inherit} at "
                         f"the target.{hint}",
                     ))
-            if inherit and inherit in parent_class_strs:
-                known_strs = parent_class_strs[inherit]
+            if inherit:
+                known_strs = _owl_chain_union(parent_class_strs, inherit_of, inherit)
+            if inherit and known_strs:
                 for xm in OWL_XPATH_CLASS_RE.finditer(body):
                     exact = xm.group(2)
                     if exact in known_strs:
@@ -1696,9 +1908,11 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                         f"t-inherit class={exact!r} position= is not an exact "
                         f"class=\"…\" on {inherit} at the target.{hint}",
                     ))
-            if not parent_classes or not inherit or inherit not in parent_classes:
+            if not parent_classes or not inherit:
                 continue
-            known = parent_classes[inherit]
+            known = _owl_chain_union(parent_classes, inherit_of, inherit)
+            if not known and inherit not in parent_classes:
+                continue
             for hm in OWL_HASCLASS_RE.finditer(body):
                 cls = hm.group(1)
                 if cls in known:
@@ -1805,6 +2019,11 @@ ORDER_FIELD_QUERY_DEF_RE = re.compile(
 ORDER_TO_SQL_STRING_FIRST_RE = re.compile(
     r"""_order_to_sql\s*\(\s*(['"][^'"]+['"]|\border\b)\s*,"""
 )
+# saas _field_to_sql first arg is a string alias. Passing TableSQL rebuilds
+# TableSQL(alias, …) and asserts isinstance(alias, str) — 20_15 Gx.7.
+ORDER_FIELD_TO_SQL_FIELD_TO_SQL_RE = re.compile(
+    r"self\._field_to_sql\s*\(\s*table\s*,"
+)
 CALENDAR_DATE_DELAY_RE = re.compile(
     r"<calendar\b[^>]*\bdate_delay\s*=",
     re.IGNORECASE,
@@ -1829,6 +2048,35 @@ def check_qweb_tesc(repo: str, module: str) -> list[Finding]:
                 "(_validate_qweb_directive). Use t-out. OWL static/src "
                 "templates may keep t-esc.",
             ))
+    return out
+
+
+DATA_BASE64_RE = re.compile(r'type="base64"[^>]*\bfile=|\bfile="[^"]*"[^>]*type="base64"')
+
+
+def check_data_base64(repo: str, module: str) -> list[Finding]:
+    """<field type="base64" file="..."/> is deprecated at saas-19.4.
+
+    convert.py:145-148 warns "Since 20.0, use type=bytes instead of
+    type=base64" on every file-backed load, and the warning gate
+    attributes it to our module. Core saas has zero left: every
+    file-backed Binary/image field uses type="bytes"
+    (hr_recruitment raw, event image_1920). ir.attachment.raw wants
+    bytes, so base64 there is also the wrong payload.
+    """
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml"):
+        src = read(full)
+        for lineno, line in enumerate(src.splitlines(), 1):
+            if DATA_BASE64_RE.search(line):
+                out.append(Finding(
+                    "data-base64", module, rel, lineno,
+                    'type="base64" file= is deprecated at saas-19.4 '
+                    "(convert.py:145-148 DeprecationWarning, attributed to "
+                    'this module by the log gate). Successor: type="bytes". '
+                    "Core saas has no type=base64 left. On ir.attachment.raw "
+                    "it is also the wrong payload — raw takes bytes.",
+                ))
     return out
 
 
@@ -1911,6 +2159,15 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                     "_order_to_sql(order, query) is the 19.0 call; saas-19.4 "
                     "is _order_to_sql(table, order). Get table from "
                     "_as_query().table or _search(...).table.",
+                ))
+            if ORDER_FIELD_TO_SQL_FIELD_TO_SQL_RE.search(line):
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "_field_to_sql(table, …): saas first arg is a string "
+                    "alias; TableSQL rebuilds TableSQL(alias, …) and "
+                    "asserts isinstance(alias, str). Successor "
+                    "table.<field> like mailing / documents. Observed "
+                    "20_15 Gx.7 article LOWER() search.",
                 ))
             if "compute=lambda self: self._compute_res_access" in line:
                 out.append(Finding(
@@ -2657,7 +2914,8 @@ def main() -> int:
                                    "(dead-hook,stale-override,js-import,js-symbol,"
                                    "owl-xpath,owl-tref,owl-this,owl-hook,python-api,patch-target,"
                                    "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
-                                   "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc)")
+                                   "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc,"
+                                   "data-base64)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -2684,7 +2942,7 @@ def main() -> int:
         "owl-tref", "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow",
         "view-xmlid", "view-anchor", "qweb-tcall", "security-model", "access-or",
         "access-grant", "access-op", "field-lit",
-        "manifest-version", "calendar-attr", "qweb-tesc",
+        "manifest-version", "calendar-attr", "qweb-tesc", "data-base64",
     }
 
     if not args.quiet:
@@ -2734,6 +2992,8 @@ def main() -> int:
             fs += check_manifest_version(args.repo, module, target)
         if "calendar-attr" in want:
             fs += check_calendar_attrs(args.repo, module)
+        if "data-base64" in want:
+            fs += check_data_base64(args.repo, module)
         if "qweb-tesc" in want:
             fs += check_qweb_tesc(args.repo, module)
         if kinds:
@@ -2748,7 +3008,7 @@ def main() -> int:
             by_kind[f.kind].append(f)
         for kind in ("dead-hook", "js-import", "js-symbol", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
-                     "view-anchor", "qweb-tcall", "qweb-tesc", "calendar-attr", "security-model",
+                     "view-anchor", "qweb-tcall", "qweb-tesc", "data-base64", "calendar-attr", "security-model",
                      "access-or", "access-grant", "access-op", "field-lit",
                      "manifest-version", "stale-override"):
             group = by_kind.get(kind)
