@@ -11,7 +11,9 @@ phase-1 analysis proved are findable statically:
                or a loadJS/loadCSS URL deleted at the target
                (/web/static/lib/jquery/jquery.js)
   view-xmlid   an `inherit_id` ref to a core view that no longer exists
-  field-lit         a literal use of a removed field name (`datas`, `product_uom`)
+  field-lit         a literal use of a removed field name (`datas`, `product_uom`),
+                    leftover resource_calendar_id.tz, or a tz field on a
+                    resource.calendar record (successor resource.mixin.tz)
   access-or         a grouped ir.access with an empty domain next to another
                     grouped row on the same model that has a real domain —
                     empty is Domain.TRUE and ORs the filter away (rule 22).
@@ -46,10 +48,12 @@ phase-1 analysis proved are findable statically:
                     or a PascalCase child prop="prop"
                     (TimeTableTable timeTableId="timeTableId")
   qweb-tcall        inner t-set of a t-call (breadcrumbs_searchbar / object /
-                    token / title / size / mobileSize) — saas-19.4 no longer
-                    copies those onto the callee; write a t-call attribute or
-                    a controller value. size/mobileSize on a snippet item
-                    dies at 10 - size (None) during html_builder render
+                    token / title / size / mobileSize / service / entries /
+                    card_* / _classes / no_breadcrumbs / additional_title)
+                    — saas-19.4 no longer copies those onto the callee;
+                    write a t-call attribute or a sibling t-set. size/mobileSize
+                    on a snippet item dies at 10 - size (None); Appointments
+                    cards miss hrefs (`20_16`)
   owl-hook          useEffect(fn, deps) from @odoo/owl — OWL 3 ignores the deps array
   python-api        a call to a core method gone at the target
                     (get_param / set_param / Registry.clear_cache /
@@ -301,12 +305,19 @@ OWL_XML_LIT_RE = re.compile(r"\bxml\s*`([\s\S]*?)`")
 # saas-19.4 dropped is_deprecated_version: inner t-set of a t-call is
 # the slot only. Those keys never reach the callee (first child or later
 # sibling). size/mobileSize on a snippet item is 10 - None at render.
-QWEB_TCALL_INNER_SET_RE = re.compile(
-    r'<t\b[^>]*\bt-call="([^"]+)"[^>]*>'
-    r'(?:(?!</t>).)*?'
-    r'<t\b[^>]*\bt-set="'
-    r'(breadcrumbs_searchbar|object|token|title|size|mobileSize)"',
+# Appointments cards miss hrefs when card_href stays an inner t-set (`20_16`).
+QWEB_TCALL_ARG_KEYS = (
+    "breadcrumbs_searchbar", "object", "token", "title", "size", "mobileSize",
+    "service", "entries", "card_href", "card_records", "_classes", "card_active",
+    "card_show_image", "card_label", "card_details_href", "no_breadcrumbs",
+    "additional_title",
+)
+QWEB_TCALL_OPEN_RE = re.compile(
+    r'<t\b([^>]*\bt-call="([^"]+)"[^>]*)>',
     re.S,
+)
+QWEB_TCALL_TSET_RE = re.compile(
+    r'<t\b[^>]*\bt-set="(%s)"' % "|".join(QWEB_TCALL_ARG_KEYS),
 )
 # OWL inherit matches the full opening tag. saas-19.4 prefixed many
 # directives with this. (`canDownload` → `this.canDownload`); a leftover
@@ -1972,6 +1983,49 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
     return out
 
 
+def _qweb_t_open(src: str, start: int) -> int:
+    """Index of the next `<t …>` / `<t/>` tag, skipping `<template>` / `<thead>`."""
+    i = start
+    while True:
+        p = src.find("<t", i)
+        if p == -1:
+            return -1
+        nxt = src[p + 2:p + 3]
+        if nxt in ("", " ", ">", "/", "\n", "\t"):
+            return p
+        i = p + 2
+
+
+def _qweb_t_body(src: str, start: int) -> str | None:
+    """Return the matching <t>…</t> body after start, or None if unbalanced."""
+    depth = 1
+    i = start
+    n = len(src)
+    while i < n and depth:
+        nxt_open = _qweb_t_open(src, i)
+        nxt_close = src.find("</t>", i)
+        if nxt_close == -1:
+            return None
+        if nxt_open != -1 and nxt_open < nxt_close:
+            end = src.find(">", nxt_open)
+            if end == -1:
+                return None
+            tag = src[nxt_open:end + 1]
+            if not tag.rstrip().endswith("/>"):
+                depth += 1
+            i = end + 1
+            continue
+        depth -= 1
+        if depth:
+            i = nxt_close + 4
+    if depth:
+        return None
+    return src[start:nxt_close]
+
+
+BA_STEP_QWEB_RE = re.compile(r"website\.ba_step[1-6]\b")
+
+
 def check_qweb_tcall(repo: str, module: str) -> list[Finding]:
     """Inner t-set of a t-call is the slot only at saas-19.4."""
     out: list[Finding] = []
@@ -1980,16 +2034,47 @@ def check_qweb_tcall(repo: str, module: str) -> list[Finding]:
         if "/static/" in rel_posix:
             continue
         src = read(full)
-        for match in QWEB_TCALL_INNER_SET_RE.finditer(src):
-            lineno = src.count("\n", 0, match.start()) + 1
+        for i, line in enumerate(src.splitlines(), 1):
+            if not BA_STEP_QWEB_RE.search(line):
+                continue
+            if "_ba_frontend_text" in line or "_ba_step_labels" in line:
+                continue
             out.append(Finding(
-                "qweb-tcall", module, rel, lineno,
-                f"t-call {match.group(1)!r} inner t-set={match.group(2)!r} "
-                f"does not reach the callee (saas-19.4 dropped "
-                f"is_deprecated_version). Successor: t-call attribute "
-                f"({match.group(2)}=\"True\") or a controller / sibling t-set. "
-                f"sale portal writes breadcrumbs_searchbar=\"True\".",
+                "qweb-tcall", module, rel, i,
+                "QWeb website.ba_stepN reads English on saas frontend "
+                "even after jsonb has the visitor language. Successor: "
+                "website._ba_frontend_text('ba_stepN') / "
+                "website._ba_step_labels() (20_16 HttpCase).",
             ))
+        for match in QWEB_TCALL_OPEN_RE.finditer(src):
+            attrs, name = match.group(1), match.group(2)
+            if attrs.rstrip().endswith("/"):
+                continue
+            body = _qweb_t_body(src, match.end())
+            if body is None:
+                continue
+            seen = set()
+            for sm in QWEB_TCALL_TSET_RE.finditer(body):
+                key = sm.group(1)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if re.search(rf"\b{re.escape(key)}=", attrs):
+                    continue
+                if re.search(
+                    rf'<t\b[^>]*\bt-call="[^"]+"[^>]*\b{re.escape(key)}=',
+                    body,
+                ):
+                    continue
+                lineno = src.count("\n", 0, match.start()) + 1
+                out.append(Finding(
+                    "qweb-tcall", module, rel, lineno,
+                    f"t-call {name!r} inner t-set={key!r} "
+                    f"does not reach the callee (saas-19.4 dropped "
+                    f"is_deprecated_version). Successor: t-call attribute "
+                    f"({key}=\"True\") or a controller / sibling t-set. "
+                    f"sale portal writes breadcrumbs_searchbar=\"True\".",
+                ))
     return out
 
 
@@ -2195,6 +2280,14 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                     "truthiness then loads /web/image. Successor: "
                     "bool(icon.content or icon). Observed 20_7 Gx.8 "
                     "Menu Management.",
+                ))
+            if re.search(r"base64\.b64encode\(", line):
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    "base64.b64encode(...): saas Image/Binary convert_to_cache "
+                    "rejects bytes (TypeError: use BinaryValue instead of bytes). "
+                    "Successor BinaryBytes(raw) from odoo.tools.binary, or a "
+                    "base64 str. Observed 20_16 Gx.5 car-rent variant images.",
                 ))
             leftover_notify_msg_vals = (
                 "msg_vals=" in line
@@ -2880,6 +2973,16 @@ def check_manifest_version(repo: str, module: str, target: Target) -> list[Findi
     return []
 
 
+CALENDAR_TZ_ATTR_RE = re.compile(r"resource_calendar_id\.tz\b")
+CALENDAR_SELF_TZ_RE = re.compile(r"timezone\(\s*self\.tz\s*\)")
+CALENDAR_RECORD_RE = re.compile(
+    r'<record\b([^>]*)>(.*?)</record>',
+    re.DOTALL | re.IGNORECASE,
+)
+CALENDAR_RECORD_MODEL_RE = re.compile(r'\bmodel="resource\.calendar"')
+CALENDAR_TZ_FIELD_RE = re.compile(r'<field\s+name="tz"')
+
+
 def check_field_literals(repo: str, module: str) -> list[Finding]:
     out: list[Finding] = []
     pats = {name: re.compile(rf"""["']{re.escape(name)}["']""") for name in REMOVED_FIELD_LITERALS}
@@ -2888,13 +2991,44 @@ def check_field_literals(repo: str, module: str) -> list[Finding]:
         rel_posix = rel.replace(os.sep, "/")
         if "/tests/" in rel_posix:
             continue
-        for lineno, line in enumerate(read(full).splitlines(), 1):
+        src = read(full)
+        for lineno, line in enumerate(src.splitlines(), 1):
             for name, why in REMOVED_FIELD_LITERALS.items():
                 if name == "datas" and EXPORT_DATAS_RE.search(line):
                     continue
                 if pats[name].search(line) or attr[name].search(line):
                     out.append(Finding("field-lit", module, rel, lineno,
                                        f"{name!r}: {why}"))
+            if CALENDAR_TZ_ATTR_RE.search(line):
+                out.append(Finding(
+                    "field-lit", module, rel, lineno,
+                    "resource_calendar_id.tz: saas-19.4 dropped "
+                    "resource.calendar.tz. Successor is resource.mixin.tz "
+                    "/ resource.resource.tz (resource.tz or \"UTC\"). "
+                    "Observed 20_16 Gx.4 Invalid field tz on Layer-1 demo.",
+                ))
+            if CALENDAR_SELF_TZ_RE.search(line):
+                out.append(Finding(
+                    "field-lit", module, rel, lineno,
+                    "timezone(self.tz) on resource.calendar: field is gone. "
+                    "Successor is resource.tz or context/user/UTC. Observed "
+                    "20_16 Gx.5 _ba_attendance_intervals AttributeError.",
+                ))
+        if rel.endswith(".xml"):
+            for rec in CALENDAR_RECORD_RE.finditer(src):
+                if not CALENDAR_RECORD_MODEL_RE.search(rec.group(1)):
+                    continue
+                tz_field = CALENDAR_TZ_FIELD_RE.search(rec.group(2))
+                if not tz_field:
+                    continue
+                lineno = src.count("\n", 0, rec.start() + tz_field.start()) + 1
+                out.append(Finding(
+                    "field-lit", module, rel, lineno,
+                    "<field name=\"tz\"> on resource.calendar: field is gone. "
+                    "Write tz on the resource.mixin record. Observed 20_16 "
+                    "Gx.4: load_demo swallowed the ParseError and installed "
+                    "without demo.",
+                ))
     return out
 
 

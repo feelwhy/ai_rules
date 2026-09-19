@@ -280,6 +280,22 @@ self.env["ir.attachment"].create({"name": fname, "raw": content})
 payload = record.raw.content  # bytes; record.raw itself is BinaryValue
 ```
 
+Image / Binary fields (except `ir.attachment.raw`) **reject `bytes`**:
+`TypeError: …image_1920: use BinaryValue instead of bytes`. 19.0
+`base64.b64encode(fh.read())` is `bytes`, so it dies. A base64 **str** still
+works (RPC path). Native write is `BinaryBytes(raw_jpeg)` from
+`odoo.tools.binary`. Observed `20_16` Gx.5
+`_demo_ba_stamp_car_rent_variants`. Checker `python-api` greps
+`base64.b64encode` assigned into a field.
+
+```python
+# BEFORE
+vals["image_1920"] = base64.b64encode(fh.read())
+# AFTER
+from odoo.tools.binary import BinaryBytes
+vals["image_1920"] = BinaryBytes(fh.read())
+```
+
 Audit every attachment write, not just the ones a grep highlights. Encode to
 base64 only at the boundary that still needs it.
 
@@ -655,6 +671,45 @@ Dangerous because these names are often **strings** in group-by keys, domains an
 where nothing raises. Grep for the literal `"product_uom"`, not just attribute access. Note
 `sale.order.line` and `product.supplierinfo` already use `product_uom_id` on 19.0 — do not conflate.
 
+### `resource.calendar.tz` removed — timezone lives on the resource
+
+19.0 `resource.calendar.tz` is gone at saas-19.4 (`addons/resource/models/resource_calendar.py`
+has no `tz`; core `resource_data.xml` / `resource_demo.xml` no longer write it). Timezone is
+`resource.resource.tz` / `resource.mixin.tz` (related, writable). Core `_work_intervals_batch`
+takes `resources_per_tz`; a leftover `resource_calendar_id.tz` is `False` and `timezone(False)`
+raises.
+
+Observed `20_16` Gx.4: Layer-1 `demo_catalog.xml` died
+`ValueError: Invalid field 'tz' in 'resource.calendar'` and Odoo installed the module
+**without demo** (`load_demo` swallows the ParseError). Slot code then read
+`resource_calendar_id.tz`. Successor: drop `tz` on the calendar; write `tz` on
+`business.resource` (mixin); read `resource.tz`. Same attendance port: saas dropped
+`resource.calendar.attendance.name` (required Char on 19.0); `day_period` is computed.
+A 24/7 demo is one `hour_from=0` / `hour_to=24` row per weekday (saas onchange allows 24).
+
+Do **not** add a bare `tz` to `field-lit` — `res.users` / `resource.resource` /
+`resource.mixin` still have it. Checker greps `resource_calendar_id.tz`,
+`timezone(self.tz)` (calendar method leftover), and `<field name="tz">`
+inside a `resource.calendar` record.
+
+```python
+# BEFORE
+tz = resource.resource_calendar_id.tz
+# AFTER
+tz = resource.tz or "UTC"
+```
+
+```xml
+<!-- BEFORE -->
+<record id="demo_calendar" model="resource.calendar">
+    <field name="tz">Europe/Brussels</field>
+</record>
+<!-- AFTER: tz on the resource.mixin record, not the calendar -->
+<record id="demo_resource" model="business.resource">
+    <field name="tz">Europe/Brussels</field>
+</record>
+```
+
 ### Mail tracking values are gone
 
 `mail.tracking.value` and `mail.message.tracking_value_ids` were removed in saas-19.3
@@ -959,9 +1014,12 @@ first `t-call`) and the slot later set the flag for `portal.portal_searchbar`
 ```
 
 Checker kind `qweb-tcall` flags an inner `t-set` of `breadcrumbs_searchbar`
-/ `object` / `token` / `title` / `size` / `mobileSize` (not only the first
-child). Observed `20_14` Gx.8 token share and `20_15` Gx.7 snippet palette
-(`10 - size` with `size is None`).
+/ `object` / `token` / `title` / `size` / `mobileSize` / `service` /
+`entries` / `card_href` / `card_records` / `_classes` / `card_active` /
+`card_show_image` / `card_label` / `card_details_href` / `no_breadcrumbs` /
+`additional_title` (not only the first child). Observed `20_14` Gx.8 token
+share, `20_15` Gx.7 snippet palette (`10 - size` with `size is None`), and
+`20_16` Gx.7 Appointments cards / portal sidebar / service price.
 
 ### `website.default_website` moved to `base.default_website`
 
@@ -1293,9 +1351,9 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` / `contains(@class)` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`; `o_form_button_save` left `web.FormView.Buttons` for `web.FormView.DialogButtons`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list), **or** `RecipientsInput` still inherited from `mail.Chatter` (successor `mail.ChatterComposer`) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
 | `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `t-if` / `t-elif` ident (`t-if="projectUser"`), a bare `t-props="viewProps"` / `modalRef="modalRef"`, a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`), or a PascalCase child `prop="prop"` (`<TimeTableTable timeTableId="timeTableId"/>` — successor `this.timeTableId`; `20_7` timetable open). Indexes inherit-only `<t t-inherit>` with no `t-name` (`20_15` multilang `state.uniqueId`). Quiet for names introduced by `t-as` / `t-set` in that template (`20_11` forecast foreach aliases; `OMMItem oMenu="oMenu"`) |
-| `qweb-tcall` | inner `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` / `size` / `mobileSize` on a `t-call` — saas-19.4 slot only. `size`/`mobileSize` on a snippet item is `10 - None` (`20_15` KnowSystem palette) |
+| `qweb-tcall` | inner `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` / `size` / `mobileSize` / `service` / `entries` / `card_*` / `_classes` / `no_breadcrumbs` / `additional_title` on a `t-call` — saas-19.4 slot only. `size`/`mobileSize` on a snippet item is `10 - None` (`20_15` KnowSystem palette). Appointments cards miss `card_href` (`20_16`). Also leftover QWeb `website.ba_stepN` (successor `_ba_frontend_text` / `_ba_step_labels` — `20_16` HttpCase stepper stayed English after flush) |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), leftover `_field_to_sql(table,` (saas first arg is a string alias — successor `table.<field>`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), or leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`), or `"web_icon_data": self.web_icon_data` (saas Binary is `BinaryValue`; jsonrpc `.content.decode()` dies on PNG `0x89`; successor `bool(icon)`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), leftover `_field_to_sql(table,` (saas first arg is a string alias — successor `table.<field>`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`), `"web_icon_data": self.web_icon_data` (saas Binary is `BinaryValue`; jsonrpc `.content.decode()` dies on PNG `0x89`; successor `bool(icon)`), or leftover `base64.b64encode(` into Image/Binary (`TypeError: use BinaryValue instead of bytes` — successor `BinaryBytes(raw)`; `20_16` Gx.5) |
 | `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
 | `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
 | `data-base64` | `<field type="base64" file="…"/>` in data/demo XML — saas `convert.py` deprecates it and the gate blames our module; successor `type="bytes"`. On `ir.attachment.raw` it is also the wrong payload |
@@ -1307,7 +1365,7 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `access-or` | a grouped `ir.access` with an **empty** domain on a model that also has a grouped row with a real domain and overlapping ops — empty is `Domain.TRUE` and ORs the filter away. Explicit `[(1, '=', 1)]` is not this kind. Restrictions (no `group_id`) AND and are safe. Also a **core/enterprise** empty permission on a model this module domains, unless the module ANDs via `_access_domain` |
 | `access-grant` | a `base.group_user` permission with write ops (`c`/`u`/`d`) on a model that also has a product-group permission — 19.0 `ir.rule` on Internal User was a filter, not an ACL grant. Quiet when 19.0 `ir.model.access` already granted that write (`20_4` portal vaults) |
 | `access-op` | `ir.access.operation` is not a `CRUD_SELECTION` key. Letters stay in `crud` order (`cr` not `rc`). saas rejects the CSV (`Value 'rc' not found`) |
-| `field-lit` | a literal use of a removed field name |
+| `field-lit` | a literal use of a removed field name (`datas`, `product_uom`), leftover `resource_calendar_id.tz`, leftover `timezone(self.tz)` on a calendar method (`20_16` Gx.5 `_ba_attendance_intervals`), or `<field name="tz">` on a `resource.calendar` record (successor `resource.mixin.tz` — `20_16` Layer-1 demo died `Invalid field 'tz'`) |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
 
 Always pass `--odoo-base-ref`. Without it the hook check cannot tell a fresh removal from an
@@ -1822,6 +1880,12 @@ without evidence does not belong in this rule.
   `3630379f63633612e5a9e8d435deecbe26eaa15a`). That key is not
   `ir.attachment.datas`. Leave it. Checker `field-lit` skips a `datas`
   literal on an `export_data` / `result.get("datas")` line.
+- **A bare `tz` is not `resource.calendar.tz`.** saas still has
+  `res.users.tz` / `resource.resource.tz` / `resource.mixin.tz`. A
+  `REMOVED_FIELD_LITERALS["tz"]` pass would flag every demo resource
+  and the Appointments form. Bind to `resource_calendar_id.tz` and to
+  `<field name="tz">` inside a `resource.calendar` record only.
+  Observed `20_16` Gx.4.
 - *(2026-09-16, `20_4` Gx.3)* `access-grant` flagged
   `access_portal_password_key` / `_bundle` (`base.group_user` crud next
   to the vaults-group `r` row). 19.0 ACL already granted Internal User
@@ -2236,3 +2300,70 @@ without evidence does not belong in this rule.
   `editor_type in ('website_editor', 'backend_editor', 'html')`.
   Checker `js-symbol` flags leftover website `builder_options` without
   `website-options`.
+- *(2026-09-19, `20_16` Gx.4)* `resource.calendar.tz` is gone. Layer-1
+  `demo_catalog.xml` died `Invalid field 'tz' in 'resource.calendar'`;
+  saas `load_demo` then installed the module without demo, so Gx.5
+  counts stayed 0. Successor: drop calendar `tz`; write/read
+  `resource.mixin.tz`. Same file: saas attendance has no `name`
+  (19.0 required Char) and `day_period` is computed — one
+  `hour_from=0` / `hour_to=24` row per weekday. Checker `field-lit`
+  greps `resource_calendar_id.tz` and a `tz` field on a
+  `resource.calendar` record, not a bare `tz` (users / mixin keep it).
+- *(2026-09-19, `20_16` Gx.5)* Stamp died
+  `TypeError: product.product.image_1920: use BinaryValue instead of
+  bytes` at `_demo_ba_stamp_car_rent_variants`. saas
+  `convert_to_cache` accepts `BinaryValue` or a base64 **str**, not
+  `bytes` (`fields_binary.py`). 19.0 `base64.b64encode(fh.read())` is
+  bytes. Successor `BinaryBytes(fh.read())`. Same leftover on
+  `_demo_cf_put_file`. Checker `python-api` greps `base64.b64encode(`.
+- *(2026-09-19, `20_16` Gx.5)* After calendar XML `tz` was dropped,
+  stamp still died `AttributeError: 'resource.calendar' object has no
+  attribute 'tz'` at `_ba_attendance_intervals`. Leftover
+  `timezone(self.tz)`. Successor: `resource.tz` (the
+  `resource.resource` passed in) or context/user/`UTC`. Checker
+  `field-lit` greps `timezone(self.tz)`.
+- *(2026-09-19, `20_16` Gx.7)* Inner `t-set` of `service` /
+  `entries` / `card_href` / `card_records` / `_classes` /
+  `no_breadcrumbs` / `additional_title` never reaches the
+  callee. `/appointments/services/1` died `KeyError: 'service'`;
+  type cards had empty `<a class="stretched-link">`; portal
+  detail missed `#ba_functional_buttons`; breadcrumbs stayed
+  on. Successor: `t-call` attributes (sibling `t-set` when the
+  slot also reads the name). Checker `qweb-tcall` now matches
+  those keys.
+- *(2026-09-19, `20_16` Gx.7)* `_ensure_ba_frontend_translations`
+  called `update_field_translations` on `website.ba_step*` in
+  `lang=en_US`. saas `_update_field_translations` SQL-merges
+  then `self[field_name] = self[field_name]`. That write-back
+  of the current-lang string drops other JSON keys, so
+  `ru_RU` stayed `Choose resource type`. `prefetch_langs=True`
+  then dies `StoredTranslations` on the jsonb string
+  (`ValueError: dictionary update sequence element #0`).
+  Successor: `record.write({fname: {"en_US": current, **mapping}})`
+  then `flush_recordset`. Char `write` of a dict is cache-only
+  (`get_column_update` emits jsonb on flush); a one-lang dict
+  takes the string path. `cr.commit()` is forbidden in HttpCase.
+  Assert the SQL jsonb, not only `with_context(lang=ru_RU)`.
+  View-term `arch_db` (`{lang: {src: text}}`) already works —
+  do not change that path. Flush is **not** HTTP proof: after
+  this write, TransactionCase SQL+ORM was green and
+  `/ru/appointments/1` still rendered `Choose resource type`
+  on `website.ba_step1` (page chrome was already ru). Successor
+  for QWeb: `website._ba_frontend_text(fname)` /
+  `_ba_step_labels()` using `request.lang` then the packs when
+  the stored visitor-lang value equals the English source.
+  Checker `qweb-tcall` greps leftover `website.ba_stepN`.
+- *(2026-09-19, `20_16` Gx.7)* After the Char write+flush landed,
+  `test_ru_stepper_and_signin_render` still failed
+  `Выберите тип ресурса` not in `/ru/appointments/1`. HTML
+  was `lang="ru-RU"` with Russian menu/cards; stepper,
+  `<title>`, and searchbar brand stayed English. Live SQL
+  on the review DB was still `{'en_US': 'Choose resource
+  type'}` only; HttpCase after `_ensure`+flush still
+  rendered the English Char. Successor: do not trust saas
+  Char translate on website records during frontend QWeb.
+  `website._ba_frontend_text` / `_ba_step_labels` read
+  `request.lang` then the packs when stored lang equals
+  the English source. Keep `_ensure` for settings jsonb.
+  `cr.commit()` stays forbidden. Do not claim flush-alone
+  is HTTP proof.
