@@ -2441,13 +2441,13 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `dead-hook` | the hook existed at the **base** ref and is gone at the target — a silent break. Also `_check_access`: the name survives but `check_access` is `@typing.final` (`DEAD_DESPITE_EXISTING`) |
 | `stale-override` | absent at **both** refs — already dead before this port; a defect on the current serie, not porting work |
 | `js-import` | an `@mod/path` import resolving to no file in `odoo` or `enterprise`, or a `loadJS` URL deleted at the target (`/web/static/lib/jquery/jquery.js`) |
-| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`), `archInfo.openAction` (moved to the `KanbanRecord` prop; successor `this.props.openAction`), `.\w+_id[0]` (many2one is `{id, display_name}`; successor `.id`), `...CharField.props` (saas instance `props(charFieldProps)` strips extras; successor `props = props({ ...charFieldProps, extra })`), `...FormController.props` (saas instance `props(formControllerProps)` strips extras; leftover `refreshReport` is not a function — successor `props = props({ ...formControllerProps, extra })`), `config.orderBy = []` then `sortBy` (toggle clears to `defaultOrderBy`; successor `list.load({ orderBy })`), `asc: !this.asc` (19.0 sortBy-toggle leftover after `load({orderBy})` uses `this.asc`; successor pass `this.asc` on jstree notify too), `getRecordClasses(` (saas article class is `getCardClasses`; leftover never runs so `jstr-kanban-selected` never lands), `(jstreeData || [])` (off-proxy copy must not coerce `False`/`None`; optional-section header stays painted), `store.emojiLoader` (19.0 `mail.store` field; saas successor is the `emojiLoader` singleton — leftover `.loaded` is `undefined.loaded`), and `history.addStep` (HistoryPlugin shared API is `commit`; leftover `this.dependencies.history.addStep` is not a function) |
+| `js-symbol` | a **named** import (or `const { X } = owl`) whose path still resolves but the symbol is not exported at the target — this is how `useState` hid. Also `._replaceWith(` (method gone; successor `list.set`), `archInfo.openAction` (moved to the `KanbanRecord` prop; successor `this.props.openAction`), `.\w+_id[0]` (many2one is `{id, display_name}`; successor `.id`), `...CharField.props` (saas instance `props(charFieldProps)` strips extras; successor `props = props({ ...charFieldProps, extra })`), `...FormController.props` (saas instance `props(formControllerProps)` strips extras; leftover `refreshReport` is not a function — successor `props = props({ ...formControllerProps, extra })`), `config.orderBy = []` then `sortBy` (toggle clears to `defaultOrderBy`; successor `list.load({ orderBy })`), `asc: !this.asc` (19.0 sortBy-toggle leftover after `load({orderBy})` uses `this.asc`; successor pass `this.asc` on jstree notify too), `getRecordClasses(` (saas article class is `getCardClasses`; leftover never runs so `jstr-kanban-selected` never lands), `(jstreeData || [])` (off-proxy copy must not coerce `False`/`None`; optional-section header stays painted), `store.emojiLoader` (19.0 `mail.store` field; saas successor is the `emojiLoader` singleton — leftover `.loaded` is `undefined.loaded`), `history.addStep` (HistoryPlugin shared API is `commit`; leftover `this.dependencies.history.addStep` is not a function), and `record.data.id` (saas FormRecord does not put `id` in `data`; leftover browse is `Invalid falsy real id` — successor `record.resId`) |
 | `owl-xpath` | an OWL `t-inherit` XPath that selects `@t-ref` / `@t-esc` on a core template, **or** `hasclass()` / `contains(@class)` of a class that left the inherited `t-name` (`o-kanban-button-new` left `web.KanbanView`; `o_form_button_save` left `web.FormView.Buttons` for `web.FormView.DialogButtons`), **or** a `position=` tag whose `t-if` / `t-elif` / `t-else` value is not on that `t-name` (`canDownload` vs `this.canDownload`), **or** a `position=` / `@class=` inherit whose exact `class="…"` string is not on that `t-name` (`o_calendar_sidebar` vs the saas collapsed-rail class list), **or** `RecipientsInput` still inherited from `mail.Chatter` (successor `mail.ChatterComposer`) |
 | `owl-tref` | an OWL-2 named `t-ref` / `t-model` / `t-portal` in our own `static/src` template; core writes `t-custom-*` |
-| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `t-if` / `t-elif` ident (`t-if="projectUser"`), a bare `t-props="viewProps"` / `modalRef="modalRef"`, a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), or a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`). Quiet for names introduced by `t-as` / `t-set` in that template (`20_11` forecast foreach aliases) |
+| `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `t-if` / `t-elif` ident (`t-if="projectUser"`), a bare `t-props="viewProps"` / `modalRef="modalRef"`, a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`), or a PascalCase child `prop="prop"` (`<TimeTableTable timeTableId="timeTableId"/>` — successor `this.timeTableId`; `20_7` timetable open). Quiet for names introduced by `t-as` / `t-set` in that template (`20_11` forecast foreach aliases; `OMMItem oMenu="oMenu"`) |
 | `qweb-tcall` | first-child `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` on a `t-call` — saas-19.4 slot only |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), or leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), or leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`), or `"web_icon_data": self.web_icon_data` (saas Binary is `BinaryValue`; jsonrpc `.content.decode()` dies on PNG `0x89`; successor `bool(icon)`) |
 | `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
 | `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
 | `patch-target` | a `patch()` whose imported target no longer resolves |
@@ -3155,6 +3155,39 @@ without evidence does not belong in this rule.
   `js-symbol` greps `...FormController.props`. Retro-scan
   of already-ported groups: only these two forecast
   controllers. Gx.7 first-click never hit those buttons.
+- *(2026-09-19, `20_7` Gx.8)* Menu Management died
+  `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x89`
+  at `json_default` → `BinaryValue.content.decode()`.
+  `action_get_omm_menu_dict` returned `self.web_icon_data`
+  (PNG bytes). 19.0 Binary was base64 text; saas is
+  `BinaryValue`. Latent until the review filestore had
+  files (missing icons were False). OWL only tests
+  truthiness then `/web/image/ir.ui.menu/.../web_icon_data`.
+  Successor: `bool(icon.content or icon)`. Checker
+  `python-api` greps `"web_icon_data": self.web_icon_data`.
+  Retro-scan of already-ported groups: only this file.
+- *(2026-09-19, `20_7` Gx.8)* Opening a timetable died
+  `AssertionError: Invalid falsy real id` at
+  `timetable.timesheet` `browse` on
+  `action_get_timetable_cells`. Two leftover 19.0 shapes:
+  (1) `<TimeTableTable timeTableId="timeTableId"/>` —
+  OWL 3 compile scope is `this`, so the getter never
+  ran; (2) the getter read `record.data.id` — saas
+  FormRecord does not put `id` in `data` even with
+  `<field name="id" invisible="1"/>`. Successor:
+  `timeTableId="this.timeTableId"`, `record.resId`,
+  skip the RPC when there is no resId, filter falsy
+  o2m line ids. Checker `owl-this` same-name
+  PascalCase props + `js-symbol` `record.data.id`.
+  Retro-scan of already-ported groups: only this
+  field. Same walk: Work schedule PDF was unstyled
+  because wkhtmltopdf
+  `ConnectionRefusedError` — `web.base.url` is the
+  host port (`:18210`); `_get_report_url` uses that
+  when `report.url` is empty. Successor: stamp
+  `report.url=http://127.0.0.1:8069` on every gx8
+  (`env-gx8-filestore.sh`). Bundle
+  `web.report_assets_common` still exists.
 
 ## 30-command-vocabulary
 

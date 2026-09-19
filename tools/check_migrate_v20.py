@@ -41,8 +41,10 @@ phase-1 analysis proved are findable statically:
                     props. / model.), a bare getter (t-att-class="panelClass"),
                     a bare t-if/t-elif ident (t-if="projectUser"),
                     a bare t-props="viewProps" / modalRef="modalRef",
-                    or a bare method bind (update.bind="handleChange",
-                    t-on-click="clear", or t-on-keydown="(event) => foo()")
+                    a bare method bind (update.bind="handleChange",
+                    t-on-click="clear", or t-on-keydown="(event) => foo()"),
+                    or a PascalCase child prop="prop"
+                    (TimeTableTable timeTableId="timeTableId")
   qweb-tcall        inner t-set of a t-call (breadcrumbs_searchbar / object /
                     token / title) — saas-19.4 no longer copies those onto the
                     callee; write a t-call attribute or a controller value
@@ -60,6 +62,9 @@ phase-1 analysis proved are findable statically:
                     exists; kwargs must be in
                     _get_notify_valid_parameters; successor
                     write message.partner_ids + notify_skip_followers)
+                    or "web_icon_data": self.web_icon_data (saas Binary
+                    is BinaryValue; jsonrpc .content.decode() dies on
+                    PNG; successor bool(icon))
   calendar-attr     a <calendar date_delay=...> — gone from RNG and
                     FIELD_ATTRIBUTE_NAMES at saas-19.4; drop the attribute
   qweb-tesc         t-esc / t-raw in a non-static XML arch (ir.ui.view);
@@ -1342,6 +1347,17 @@ GONE_JS_CALLS = {
         "not a function (20_suite Cite). Successor: "
         "this.dependencies.history.commit()."
     ),
+    "record.data.id": (
+        "saas FormRecord does not put id in data (even with "
+        "<field name=\"id\"/>). Leftover record.data.id is "
+        "undefined → orm.call browse AssertionError: "
+        "Invalid falsy real id (20_7 TimeTableField "
+        "action_get_timetable_cells). Successor: "
+        "record.resId; skip the RPC when there is no resId; "
+        "filter falsy o2m line ids. Also prefix this. on "
+        "the OWL getter pass (timeTableId=\"timeTableId\" "
+        "is undefined in OWL 3)."
+    ),
 }
 
 # Data xmlids that left the 19.0 module. view-xmlid only sees inherit_id.
@@ -1489,6 +1505,16 @@ def _owl_sidebar_hint(inherit: str, exact: str) -> str:
 
 OWL_T_AS_RE = re.compile(r"""\bt-as=["']([A-Za-z_]\w*)["']""")
 OWL_T_SET_RE = re.compile(r"""\bt-set=["']([A-Za-z_]\w*)["']""")
+# <TimeTableTable timeTableId="timeTableId"/> — OWL 3 compile scope
+# is this. A leftover 19.0 same-name prop is undefined, so
+# orm.call browses [undefined] (20_7 timetable open).
+# t-as / t-set aliases stay bare (OMMItem oMenu="oMenu").
+OWL_COMPONENT_OPEN_RE = re.compile(
+    r"<([A-Z][\w.]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*)/?>"
+)
+OWL_SAME_PROP_RE = re.compile(
+    r"""\b([A-Za-z_]\w+)="(?!this\.)\1\""""
+)
 
 
 def _owl_template_locals(body: str) -> set[str]:
@@ -1550,6 +1576,19 @@ def _owl_this_extra_findings(src: str, rel: str, module: str, off: int, body: st
             f"Successor: #{{this.{im.group(1)}}} "
             f"(20_4 pwm_jstree_container search id).",
         ))
+    for cm in OWL_COMPONENT_OPEN_RE.finditer(body):
+        for pm in OWL_SAME_PROP_RE.finditer(cm.group(2)):
+            if pm.group(1) in locals_:
+                continue
+            lineno = src.count("\n", 0, off) + body[:cm.start() + pm.start()].count("\n") + 1
+            out.append(Finding(
+                "owl-this", module, rel, lineno,
+                f"{where} <{cm.group(1)}> passes {pm.group(1)}=\"{pm.group(1)}\" "
+                f"without this. OWL 3 compile scope is this.{pm.group(1)} "
+                f"(20_7 TimeTableTable timeTableId — browse Invalid "
+                f"falsy real id). Successor: {pm.group(1)}=\"this.{pm.group(1)}\". "
+                f"t-as / t-set names stay bare.",
+            ))
     return out
 
 
@@ -1888,6 +1927,17 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                     "python-api", module, rel, lineno,
                     "Field depends=\"name\" is iterated as characters. "
                     "Use @api.depends(\"name\") on a named compute.",
+                ))
+            if re.search(r'"web_icon_data"\s*:\s*self\.web_icon_data\b', line):
+                out.append(Finding(
+                    "python-api", module, rel, lineno,
+                    '"web_icon_data": self.web_icon_data: saas Binary '
+                    "is BinaryValue; jsonrpc json_default does "
+                    ".content.decode() and dies on PNG 0x89 "
+                    "(UnicodeDecodeError). OWL only tests "
+                    "truthiness then loads /web/image. Successor: "
+                    "bool(icon.content or icon). Observed 20_7 Gx.8 "
+                    "Menu Management.",
                 ))
             leftover_notify_msg_vals = (
                 "msg_vals=" in line
