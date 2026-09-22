@@ -1,0 +1,28 @@
+---
+description: Never sign a commit with Cursor or any other AI trailer
+alwaysApply: true
+---
+
+# No AI signature on commits
+
+A commit message is the task message only. Never add an AI or agent signature, trailer, or identity.
+
+## Hard ban
+
+Do not write any of these, in the subject, body, or trailers:
+
+- `Co-authored-by: Cursor <cursoragent@cursor.com>`
+- any other `Co-authored-by:` that names Cursor, Claude, Copilot, ChatGPT, Grok, Gemini, Devin, or another AI / agent
+- `Signed-off-by:`, `Generated-by:`, `Assisted-by:`, `Made-with:`, or similar lines that name an AI or agent
+- an AI name or address as `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
+
+Do not pass `--trailer` for this. Do not put the line in the commit HEREDOC.
+
+## After every commit
+
+Read `git log -1 --format=%B`. If any banned line is there (including one the environment appended), strip it before the commit counts as done:
+
+- unpushed, and created in this session → `git commit --amend` with the same message minus those lines only
+- already pushed → do not force-push; say the trailer is still on that SHA
+
+Human `Signed-off-by` / `Co-authored-by` that the user wrote themselves stay. Cryptographic `git commit -S` is unrelated and is not this ban.

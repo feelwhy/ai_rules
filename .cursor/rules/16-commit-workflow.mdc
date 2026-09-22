@@ -96,6 +96,7 @@ subjects. Recovery took two extra MRs. This gate exists so that never repeats.
    any push or MR. Do not commit knowingly broken behavior.
 2. `git status` / `git diff` — commit only paths belonging to this task; respect never-discard-WIP.
 3. Follow the repo’s existing commit-message style (focus on why).
+4. No AI trailer (`08-no-ai-commit-sign`). After the commit, `git log -1 --format=%B` must not contain `Co-authored-by: Cursor` or any other AI signature.
 
 ## Review
 

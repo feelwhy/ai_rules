@@ -138,6 +138,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `01-process-confirmation` | Step-by-step work with user confirmation |
 | `02-docker-only` | Never host venv / `odoo-bin` |
 | `03-never-discard-wip` | Do not stash/discard foreign WIP |
+| `08-no-ai-commit-sign` | No Cursor / AI trailer on any commit (`Co-authored-by` included) |
 | `07-parallel-sessions` | Coordinate parallel chats on shared code and DBs |
 | `06-verify-hypotheses` | Check the hypothesis before recommending |
 | `18-xml-translate-html` | Never empty/`<i/>` icons in `xml_translate` HTML |
@@ -552,6 +553,34 @@ Stop. Name the overlap (repo, paths, branch, DB/target). Ask which chat
 owns the next write. Do not stash, switch, or "fix" the conflict by
 discarding (`03-never-discard-wip`).
 
+## 08-no-ai-commit-sign
+
+_Never sign a commit with Cursor or any other AI trailer_
+
+# No AI signature on commits
+
+A commit message is the task message only. Never add an AI or agent signature, trailer, or identity.
+
+## Hard ban
+
+Do not write any of these, in the subject, body, or trailers:
+
+- `Co-authored-by: Cursor <cursoragent@cursor.com>`
+- any other `Co-authored-by:` that names Cursor, Claude, Copilot, ChatGPT, Grok, Gemini, Devin, or another AI / agent
+- `Signed-off-by:`, `Generated-by:`, `Assisted-by:`, `Made-with:`, or similar lines that name an AI or agent
+- an AI name or address as `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
+
+Do not pass `--trailer` for this. Do not put the line in the commit HEREDOC.
+
+## After every commit
+
+Read `git log -1 --format=%B`. If any banned line is there (including one the environment appended), strip it before the commit counts as done:
+
+- unpushed, and created in this session → `git commit --amend` with the same message minus those lines only
+- already pushed → do not force-push; say the trailer is still on that SHA
+
+Human `Signed-off-by` / `Co-authored-by` that the user wrote themselves stay. Cryptographic `git commit -S` is unrelated and is not this ban.
+
 ## 10-python-odoo
 
 _Python and Odoo ORM conventions (incl. model member order)_
@@ -839,6 +868,7 @@ subjects. Recovery took two extra MRs. This gate exists so that never repeats.
    any push or MR. Do not commit knowingly broken behavior.
 2. `git status` / `git diff` — commit only paths belonging to this task; respect never-discard-WIP.
 3. Follow the repo’s existing commit-message style (focus on why).
+4. No AI trailer (`08-no-ai-commit-sign`). After the commit, `git log -1 --format=%B` must not contain `Co-authored-by: Cursor` or any other AI signature.
 
 ## Review
 
