@@ -21,6 +21,12 @@ alwaysApply: false
 - Use `sudo()` deliberately and narrowly; add a short comment when it changes access semantics.
 - Avoid manual `cr.commit()` in business logic; only use it in explicit jobs or integration flows with a documented reason.
 
+## One model per file
+
+Each model class lives in its own file under `models/`. A new `_name` and an `_inherit` of another model are two files, even when the inherit only adds one field. Name the file after the model (`babylon_rate_bracket.py`, `res_company.py`). Import each file from `models/__init__.py`.
+
+Never put two `models.Model` or `models.TransientModel` classes in one file.
+
 ## Model file order
 
 1. `_name`, `_description`, `_inherit`, `_order`, `_rec_name`, `_check_company_auto`
