@@ -828,6 +828,14 @@ push.
 Speed, chunk-gate, `:23069` going into test mode, “CI will catch it”, or “Mode A
 already committed” are not exceptions. After `test.sh`, restart the Febado stack
 if the user still needs the browser.
+
+**A red log is not a stop.** The user already asked for the push. Read each
+failure, fix it, and re-run the same local command until it is green, then
+review and push in that same task. Do not end the turn with “tests were not
+green, so I did not push,” and do not wait for the user to repeat the push.
+The only stop is a run that cannot start (Docker down, the command itself
+missing). Incident 2026-09-23: a Febado push stopped after a red `devel` run
+and reported that instead of fixing it.
 - **Review = Cursor review of the local changes** (Bugbot subagent; add a security review when the
  change touches auth, ACL, controllers, or secrets). Fix or report its findings **before** pushing.
 - **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
