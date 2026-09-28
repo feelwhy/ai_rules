@@ -80,6 +80,15 @@ phase-1 analysis proved are findable statically:
   patch-target      a `patch()` on an import path that no longer resolves
   patch-shadow      a prototype patch of a member upstream declares as a class field
   manifest-version  a serie-prefixed manifest version while --odoo-ref is a saas-* branch
+  fa-icon           (20.0) Font Awesome markup in a file while the target has no
+                    web.fontawesome bundle; one finding per file with the icon names
+  owl-ref           (20.0) t-custom-ref in our OWL template while the target compat no
+                    longer registers the directive (successor x = signal.ref() + t-ref="this.x")
+  ctrl-hook         an override on a class imported from odoo.addons (controllers) whose base
+                    method is gone or re-signed at the target (CustomerPortal
+                    ._prepare_home_portal_values, HrAttendance.scan_barcode, ...)
+  py-import         `from odoo.<x> import NAME` importable at the base ref and gone at the
+                    target (PREFETCH_MAX left odoo.tools.constants) — ImportError at load
 
 Design notes that matter (learned the hard way in phase 1):
 
@@ -187,6 +196,51 @@ JS_SYMBOL_HINTS = {
         "htmlFieldProps. Successor: static props = { "
         "...HtmlField.props, extra } like mass_mailing "
         "MassMailingHtmlField.",
+    # 20.0 (final): the compat layer dropped the OWL-2 ref / env hooks
+    # (docs/20-final-delta.md item 2). Core writes class fields + t-ref="this.x".
+    ("@odoo/owl", "useRef"):
+        "20.0 compat no longer restores useRef. Successor: class field "
+        "`x = signal.ref()` (signal from @odoo/owl) and t-ref=\"this.x\" in "
+        "the template (web core/action_swiper).",
+    ("@web/owl2/utils", "useRef"):
+        "gone from @web/owl2/utils at 20.0. Successor: class field "
+        "`x = signal.ref()` (signal from @odoo/owl) and t-ref=\"this.x\".",
+    ("@web/core/utils/hooks", "useChildRef"):
+        "gone at 20.0. Successor: a forwarded ref prop — "
+        "useProps.static(\"modalRef\", t.signal(t.ref()).optional(() => "
+        "signal.ref())) (web core/dialog/dialog.js).",
+    ("@web/core/utils/hooks", "useForwardRefToParent"):
+        "gone at 20.0. Successor: a forwarded ref prop — "
+        "useProps.static(\"modalRef\", t.signal(t.ref()).optional(() => "
+        "signal.ref())) (web core/dialog/dialog.js).",
+    ("@web/core/utils/hooks", "useRefListener"):
+        "gone at 20.0. Attach the listener in onMounted on the ref's element.",
+    ("@web/owl2/utils", "useChildSubEnv"):
+        "gone at 20.0. Successor: useSubEnv from @web/owl2/utils (dialog.js:97).",
+    ("@odoo/owl", "useChildSubEnv"):
+        "20.0 compat no longer restores useChildSubEnv. Successor: useSubEnv "
+        "from @web/owl2/utils.",
+    ("@web/owl2/utils", "onRendered"):
+        "gone at 20.0; core rewrote its sites to onMounted / useEffect "
+        "(dropdown_popover.js). Decide per site.",
+    ("@odoo/owl", "onRendered"):
+        "20.0 compat no longer restores onRendered; core rewrote its sites to "
+        "onMounted / useEffect. Decide per site.",
+}
+
+# @mod/path files that moved at 20.0 (docs/20-final-delta.md item 3). js-import
+# reports the missing file; this adds the successor.
+MOVED_JS_PATHS = {
+    "@web/webclient/actions/action_service":
+        "standardActionServiceProps now lives in "
+        "@web/webclient/actions/action_plugin (action_plugin.js:101)",
+}
+
+# inherit_id targets removed at 20.0 with a known successor (item 9).
+VIEW_XMLID_HINTS = {
+    "sale.crm_team_salesteams_view_form":
+        "removed at 20.0 (sale no longer extends the team form). Inherit "
+        "sales_team.crm_team_view_form directly; it still carries the <notebook>.",
 }
 
 REMOVED_PYTHON_CALLS = {
@@ -1269,8 +1323,10 @@ def check_js(repo: str, module: str, target: Target, own_modules: set[str]) -> l
                 if owner in own_modules:
                     continue
                 if not target.resolve_js(spec):
+                    hint = MOVED_JS_PATHS.get(spec)
                     out.append(Finding("js-import", module, rel, lineno,
-                                       f"{spec} resolves to no file in odoo or enterprise"))
+                                       f"{spec} resolves to no file in odoo or enterprise"
+                                       + (f"; {hint}" if hint else "")))
         # patch() targets whose import is already broken are reported once more,
         # because the failure mode (asset load error) differs from a stale symbol.
         for lineno, line in enumerate(src.splitlines(), 1):
@@ -2435,8 +2491,10 @@ def check_views(repo: str, module: str, target: Target, own_modules: set[str]) -
                 if xid.split(".")[0] in own_modules:
                     continue
                 if xid not in known:
+                    hint = VIEW_XMLID_HINTS.get(xid)
                     out.append(Finding("view-xmlid", module, rel, lineno,
-                                       f"inherit_id ref {xid} does not exist at the target ref"))
+                                       f"inherit_id ref {xid} does not exist at the target ref"
+                                       + (f"; {hint}" if hint else "")))
     return out
 
 
@@ -3032,6 +3090,410 @@ def check_field_literals(repo: str, module: str) -> list[Finding]:
     return out
 
 
+# --------------------------------------------------------------------------------------
+# 20.0 (final serie) kinds — docs/20-final-delta.md. Each is gated on the target tree so a
+# run against a saas-19.4 stand-in stays quiet.
+# --------------------------------------------------------------------------------------
+
+FA_TOKEN_RE = re.compile(r"(?<![\w-])(fa-[a-z0-9]+(?:-[a-z0-9]+)*)\b")
+# Sizing / layout modifiers are not icons. A file with only these still needs the
+# markup change, so they count as sites but are not listed as icon names.
+FA_MODIFIER_RE = re.compile(
+    r"^fa-(?:fw|lg|xs|sm|[1-9]x|10x|spin|pulse|stack(?:-[12]x)?|border|inverse|ul|li|"
+    r"pull-(?:left|right)|fixed-width|rotate-\d+|flip-(?:horizontal|vertical))$"
+)
+FA_SITE_RE = re.compile(r"""\bfa fa-|icon=["']fa-|(?<![\w-])fa-[a-z0-9]""")
+
+
+def _target_fontawesome_gone(target: Target) -> bool:
+    """20.0 dropped the `web.fontawesome` bundle and font-awesome.css (item 1)."""
+    manifest = target.odoo.show("addons/web/__manifest__.py") or ""
+    css = target.odoo.exists("addons/web/static/src/libs/fontawesome/css/font-awesome.css")
+    return "web.fontawesome" not in manifest and not css
+
+
+def check_fa_icons(repo: str, module: str, target: Target) -> list[Finding]:
+    """Font Awesome markup on a target that renders Material Symbols only.
+
+    One finding per FILE (not per site): a file with 40 icons is one port job, and a
+    per-site list would drown every other kind. Successor per icon is a rename table
+    (rule 22); the markup change is mechanical: `<i class="fa fa-X"/>` ->
+    `<i class="oi" data-icon="<material>"/>`, `icon="fa-X"` -> `icon="<material>"`.
+    """
+    if not _target_fontawesome_gone(target):
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml", ".js", ".py"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/lib/" in rel_posix:
+            continue
+        first_line = 0
+        sites = 0
+        icons: dict[str, int] = defaultdict(int)
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            stripped = line.lstrip()
+            if stripped.startswith(("#", "//", "<!--")):
+                continue
+            if not FA_SITE_RE.search(line):
+                continue
+            sites += 1
+            first_line = first_line or lineno
+            for tok in FA_TOKEN_RE.findall(line):
+                if not FA_MODIFIER_RE.match(tok):
+                    icons[tok] += 1
+        if not sites:
+            continue
+        names = ", ".join(sorted(icons, key=lambda k: (-icons[k], k))[:8])
+        more = f" +{len(icons) - 8} more" if len(icons) > 8 else ""
+        out.append(Finding(
+            "fa-icon", module, rel, first_line,
+            f"{sites} Font Awesome site(s), {len(icons)} icon(s) ({names}{more}): "
+            f"web.fontawesome and font-awesome.css are gone at the target and "
+            f"ViewButton.iconFromString only emits data-icon=<string>. Successor: "
+            f'<i class="oi" data-icon="<material>"/> and icon="<material>" '
+            f"(web/static/src/libs/materialsymbols; rename table in rule 22).",
+        ))
+    return out
+
+
+OWL_CUSTOM_REF_RE = re.compile(r"""\bt-custom-ref=["']([^"']+)["']""")
+
+
+def _target_custom_ref_gone(target: Target) -> bool:
+    """20.0 compat no longer registers the t-custom-ref directive (item 2)."""
+    compat = target.odoo.show("addons/web/static/src/owl2/owl3_compatibility_layer.js")
+    if compat is None:
+        return False  # no compat layer at all: 19.0 or older; not this break
+    return "custom-ref" not in compat and "createRefSignal" not in compat
+
+
+def check_owl_refs(repo: str, module: str, target: Target) -> list[Finding]:
+    """`t-custom-ref` in our OWL templates on a target whose compat dropped it.
+
+    The JS half (useRef / useChildRef / useForwardRefToParent / onRendered /
+    useChildSubEnv) is js-symbol with JS_SYMBOL_HINTS; this is the template half.
+    """
+    if not _target_custom_ref_gone(target):
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml", ".js"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/lib/" not in rel_posix and "/static/" in rel_posix:
+            for lineno, line in enumerate(read(full).splitlines(), 1):
+                for name in OWL_CUSTOM_REF_RE.findall(line):
+                    field = name if re.fullmatch(r"[A-Za-z_$][\w$]*", name) else (
+                        re.sub(r"[^A-Za-z0-9]+(.)", lambda m: m.group(1).upper(), name))
+                    out.append(Finding(
+                        "owl-ref", module, rel, lineno,
+                        f't-custom-ref="{name}": the compat directive is gone at the '
+                        f"target (core 397 files -> 0). Successor: class field "
+                        f"`{field} = signal.ref()` (signal from @odoo/owl) and "
+                        f't-ref="this.{field}"; read `.el` as before.',
+                    ))
+    return out
+
+
+PY_ADDONS_IMPORT_RE = re.compile(r"^odoo\.addons\.([a-z_][\w]*)(?:\.(.*))?$")
+
+
+def _py_module_candidates(module_path: str) -> list[tuple[str, str]]:
+    """(tree label, path) candidates for a dotted odoo.* module path."""
+    m = PY_ADDONS_IMPORT_RE.match(module_path)
+    cands: list[tuple[str, str]] = []
+    if m:
+        addon, rest = m.group(1), (m.group(2) or "").replace(".", "/")
+        tail = f"/{rest}" if rest else ""
+        for root in (f"addons/{addon}", f"odoo/addons/{addon}"):
+            cands += [("odoo", f"{root}{tail}.py" if rest else f"{root}/__init__.py"),
+                      ("odoo", f"{root}{tail}/__init__.py")]
+        cands += [("enterprise", f"{addon}{tail}.py" if rest else f"{addon}/__init__.py"),
+                  ("enterprise", f"{addon}{tail}/__init__.py")]
+    elif module_path == "odoo" or module_path.startswith("odoo."):
+        rest = module_path.replace(".", "/")
+        cands += [("odoo", f"{rest}.py"), ("odoo", f"{rest}/__init__.py")]
+    return cands
+
+
+def _resolve_py_module(target: Target, module_path: str) -> tuple[Tree, str] | None:
+    for label, path in _py_module_candidates(module_path):
+        tree = target.odoo if label == "odoo" else target.enterprise
+        if tree is not None and tree.exists(path):
+            return tree, path
+    return None
+
+
+def _py_top_names(src: str) -> tuple[set[str], list[str], list[str] | None]:
+    """(top-level names, relative star-import modules, __all__ or None)."""
+    names: set[str] = set()
+    stars: list[str] = []
+    dunder_all: list[str] | None = None
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return names, stars, dunder_all
+
+    def visit(stmts):
+        nonlocal dunder_all
+        for node in stmts:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    for n in ast.walk(t):
+                        if isinstance(n, ast.Name):
+                            names.add(n.id)
+                if any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
+                    try:
+                        val = ast.literal_eval(node.value)
+                        dunder_all = [v for v in val if isinstance(v, str)]
+                    except Exception:
+                        pass
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+            elif isinstance(node, ast.ImportFrom):
+                if node.names and node.names[0].name == "*":
+                    if node.level == 1 and node.module:
+                        stars.append(node.module)
+                else:
+                    for a in node.names:
+                        names.add((a.asname or a.name).split(".")[0])
+            elif isinstance(node, ast.Import):
+                for a in node.names:
+                    names.add((a.asname or a.name).split(".")[0])
+            elif isinstance(node, (ast.Try, ast.If)):
+                visit(node.body)
+                if isinstance(node, ast.Try):
+                    for h in node.handlers:
+                        visit(h.body)
+                    visit(node.orelse)
+                else:
+                    visit(node.orelse)
+    visit(tree.body)
+    return names, stars, dunder_all
+
+
+@lru_cache(maxsize=512)
+def _py_exported_names(tree: Tree, path: str) -> frozenset[str]:
+    """Names importable from `path`: own top level plus one level of `from .x import *`
+    (odoo/tools/__init__.py re-exports mail / misc that way; safe_eval is a package)."""
+    src = tree.show(path) or ""
+    names, stars, dunder_all = _py_top_names(src)
+    base_dir = path.rsplit("/", 1)[0] if "/" in path else ""
+    for mod in stars:
+        for cand in (f"{base_dir}/{mod}.py", f"{base_dir}/{mod}/__init__.py"):
+            sub = tree.show(cand)
+            if sub is None:
+                continue
+            sub_names, _, sub_all = _py_top_names(sub)
+            names |= set(sub_all) if sub_all is not None else {n for n in sub_names if not n.startswith("_")}
+            break
+    return frozenset(names)
+
+
+def check_py_imports(repo: str, module: str, target: Target, base: Target | None,
+                     own_modules: set[str]) -> list[Finding]:
+    """`from odoo.<x> import NAME` where NAME is importable at the base ref and gone at the
+    target (PREFETCH_MAX left odoo.tools.constants at 20.0 — a module-load ImportError).
+
+    Classified against the base ref like dead-hook: a name this resolver cannot see at
+    EITHER ref is a resolver limit, not a finding. Own-addon imports are skipped.
+    """
+    if base is None:
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".py"):
+        try:
+            tree = ast.parse(read(full))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module or node.level:
+                continue
+            mp = node.module
+            if not (mp == "odoo" or mp.startswith("odoo.")):
+                continue
+            m = PY_ADDONS_IMPORT_RE.match(mp)
+            if m and m.group(1) in own_modules:
+                continue
+            at_target = _resolve_py_module(target, mp)
+            at_base = _resolve_py_module(base, mp)
+            if at_base is None:
+                continue
+            if at_target is None:
+                out.append(Finding(
+                    "py-import", module, rel, node.lineno,
+                    f"module {mp} exists at the base ref and not at the target ref "
+                    f"(ImportError at module load).",
+                ))
+                continue
+            tnames = _py_exported_names(*at_target)
+            bnames = _py_exported_names(*at_base)
+            for a in node.names:
+                if a.name == "*" or a.name in tnames or a.name not in bnames:
+                    continue
+                out.append(Finding(
+                    "py-import", module, rel, node.lineno,
+                    f"{a.name} is importable from {mp} at the base ref and gone at the "
+                    f"target ref (ImportError at module load; the whole addon fails to "
+                    f"import). Define a local successor or import from the new home.",
+                ))
+    return out
+
+
+def _class_methods_at(target: Target, module_path: str, class_name: str) -> dict[str, str] | None:
+    """{method: unparsed args} of `class_name` in `module_path` at a ref, or None if the
+    module or the class is not there."""
+    res = _resolve_py_module(target, module_path)
+    if res is None:
+        return None
+    tree, path = res
+    src = tree.show(path) or ""
+    try:
+        parsed = ast.parse(src)
+    except SyntaxError:
+        return None
+    for node in parsed.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return {s.name: ast.unparse(s.args) for s in node.body
+                    if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    return None
+
+
+def _param_names(unparsed_args: str) -> set[str]:
+    """Parameter names of an `ast.unparse(fn.args)` string (annotations / defaults dropped)."""
+    try:
+        fn = ast.parse(f"def _f({unparsed_args}): pass").body[0]
+    except SyntaxError:
+        return set()
+    a = fn.args
+    names = {x.arg for x in a.args + a.kwonlyargs + a.posonlyargs}
+    return names
+
+
+def _file_imports(tree: ast.Module) -> dict[str, str]:
+    """imported name -> dotted module for `from odoo... import Name [as Alias]`."""
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for a in node.names:
+                out[a.asname or a.name] = f"{node.module}::{a.name}"
+    return out
+
+
+def _core_bases(repo: str, own_modules: set[str], module_path: str, class_name: str,
+                depth: int = 0) -> list[tuple[str, str]]:
+    """Follow a base class through our own addons to the core classes it extends.
+
+    documentation_builder subclasses knowsystem_website's CustomerPortal, which subclasses
+    portal's. Only core (module_path, class_name) pairs come back; depth-limited.
+    """
+    m = PY_ADDONS_IMPORT_RE.match(module_path)
+    if not m or m.group(1) not in own_modules:
+        return [(module_path, class_name)]
+    if depth > 4:
+        return []
+    rest = (m.group(2) or "").replace(".", "/")
+    cands = [os.path.join(repo, m.group(1), f"{rest}.py"),
+             os.path.join(repo, m.group(1), rest, "__init__.py")]
+    for cand in cands:
+        if not os.path.isfile(cand):
+            continue
+        try:
+            parsed = ast.parse(read(cand))
+        except SyntaxError:
+            return []
+        imports = _file_imports(parsed)
+        for node in parsed.body:
+            if isinstance(node, ast.ClassDef) and node.name == class_name:
+                found: list[tuple[str, str]] = []
+                for b in node.bases:
+                    bname = b.id if isinstance(b, ast.Name) else (b.attr if isinstance(b, ast.Attribute) else None)
+                    if not bname or bname not in imports:
+                        continue
+                    mod, _, orig = imports[bname].partition("::")
+                    found += _core_bases(repo, own_modules, mod, orig, depth + 1)
+                return found
+        return []
+    return []
+
+
+def check_ctrl_hooks(repo: str, module: str, target: Target, base: Target | None,
+                     own_modules: set[str]) -> list[Finding]:
+    """Overrides on a class imported from odoo.addons (controllers, mostly) whose base method
+    left or changed shape at the target. dead-hook resolves hooks on MODELS; a controller
+    hook such as CustomerPortal._prepare_home_portal_values slipped through that (item 4).
+
+    exists at base, gone at target      -> never called (silent), or AttributeError on super()
+    exists at both, signature differs   -> TypeError when core / the route passes new kwargs
+    """
+    if base is None:
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".py"):
+        if "/tests/" in rel.replace(os.sep, "/"):
+            continue
+        try:
+            parsed = ast.parse(read(full))
+        except SyntaxError:
+            continue
+        imports = _file_imports(parsed)
+        for node in parsed.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            own_name, inherits = class_models(node)
+            if own_name or inherits:
+                continue  # models are dead-hook's job
+            core_bases: list[tuple[str, str]] = []
+            for b in node.bases:
+                bname = b.id if isinstance(b, ast.Name) else (b.attr if isinstance(b, ast.Attribute) else None)
+                if not bname or bname not in imports:
+                    continue
+                mod, _, orig = imports[bname].partition("::")
+                if not mod.startswith("odoo.addons."):
+                    continue
+                core_bases += _core_bases(repo, own_modules, mod, orig)
+            if not core_bases:
+                continue
+            for stmt in node.body:
+                if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for mod, cls in core_bases:
+                    at_base = _class_methods_at(base, mod, cls)
+                    if not at_base or stmt.name not in at_base:
+                        continue
+                    at_target = _class_methods_at(target, mod, cls)
+                    if at_target is None:
+                        continue  # class or module gone: py-import / a route test reports that
+                    if stmt.name not in at_target:
+                        out.append(Finding(
+                            "ctrl-hook", module, rel, stmt.lineno,
+                            f"{cls}.{stmt.name}({at_base[stmt.name]}) existed at the base ref "
+                            f"and is gone at the target: core never calls this override, and "
+                            f"a super().{stmt.name}() raises AttributeError. Find the "
+                            f"successor hook in {mod.replace('.', '/')}.py.",
+                        ))
+                    elif at_base[stmt.name] != at_target[stmt.name]:
+                        # Judge OUR override against the target, not base against target: a
+                        # saas-era rename the port already adopted must stay quiet.
+                        ours = stmt.args
+                        our_names = {a.arg for a in ours.args + ours.kwonlyargs + ours.posonlyargs}
+                        if ours.kwarg is not None:
+                            break  # **kwargs accepts whatever the target passes
+                        target_names = _param_names(at_target[stmt.name])
+                        missing = sorted(target_names - our_names - {"self", "cls"})
+                        if not missing:
+                            break
+                        out.append(Finding(
+                            "ctrl-hook", module, rel, stmt.lineno,
+                            f"{cls}.{stmt.name} signature changed: base ({at_base[stmt.name]}) "
+                            f"-> target ({at_target[stmt.name]}); the override does not accept "
+                            f"{', '.join(missing)}. Re-declare the override (and its route, if "
+                            f"re-declared) with the target parameters.",
+                        ))
+                    break
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Odoo 19 -> 20 mechanical port checks (rule 22)")
     ap.add_argument("--repo", required=True, help="addons repo being ported (tools, system, ...)")
@@ -3049,7 +3511,7 @@ def main() -> int:
                                    "owl-xpath,owl-tref,owl-this,owl-hook,python-api,patch-target,"
                                    "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
                                    "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc,"
-                                   "data-base64)")
+                                   "data-base64,fa-icon,owl-ref,ctrl-hook,py-import)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -3077,6 +3539,7 @@ def main() -> int:
         "view-xmlid", "view-anchor", "qweb-tcall", "security-model", "access-or",
         "access-grant", "access-op", "field-lit",
         "manifest-version", "calendar-attr", "qweb-tesc", "data-base64",
+        "fa-icon", "owl-ref", "ctrl-hook", "py-import",
     }
 
     if not args.quiet:
@@ -3130,6 +3593,14 @@ def main() -> int:
             fs += check_data_base64(args.repo, module)
         if "qweb-tesc" in want:
             fs += check_qweb_tesc(args.repo, module)
+        if "fa-icon" in want:
+            fs += check_fa_icons(args.repo, module, target)
+        if "owl-ref" in want:
+            fs += check_owl_refs(args.repo, module, target)
+        if "ctrl-hook" in want:
+            fs += check_ctrl_hooks(args.repo, module, target, base, own)
+        if "py-import" in want:
+            fs += check_py_imports(args.repo, module, target, base, own)
         if kinds:
             fs = [f for f in fs if f.kind in kinds]
         findings += fs
@@ -3140,10 +3611,11 @@ def main() -> int:
         by_kind: dict[str, list[Finding]] = defaultdict(list)
         for f in findings:
             by_kind[f.kind].append(f)
-        for kind in ("dead-hook", "js-import", "js-symbol", "owl-xpath", "owl-tref",
+        for kind in ("dead-hook", "ctrl-hook", "py-import", "js-import", "js-symbol", "owl-ref",
+                     "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
                      "view-anchor", "qweb-tcall", "qweb-tesc", "data-base64", "calendar-attr", "security-model",
-                     "access-or", "access-grant", "access-op", "field-lit",
+                     "access-or", "access-grant", "access-op", "field-lit", "fa-icon",
                      "manifest-version", "stale-override"):
             group = by_kind.get(kind)
             if not group:

@@ -24,6 +24,18 @@ Tested pins (2026-09-12, pre-release):
 
 Full evidence: `ai_rules_fao/docs/20-saas-19.4-delta.md`.
 
+Final pins (2026-09-28, released `20.0`; the delta from the saas-19.4 pins is the section
+**20.0 final delta** below, evidence `ai_rules_fao/docs/20-final-delta.md`):
+
+| Ref | SHA |
+|---|---|
+| `odoo@20.0` | `c6306830baea390c5fa30a99187358420684089f` |
+| `enterprise@20.0` | `366ecb35b9456c17a1b890af793de1e9c6b22ad7` |
+
+The saas-19.4 pin is **not** an ancestor of `20.0` (4977 / 2124 commits apart on `odoo`). Every
+saas-19.4 fact below still holds on 20.0 unless the final-delta section says otherwise; a fix that
+landed on saas-19.4 after 2026-09-12 must be re-checked on the 20.0 tree.
+
 ## Read this before any 19 -> 20 port
 
 ### The saas branches are independent forks, not a chain
@@ -54,6 +66,210 @@ Most of the 19 -> 20 damage does not raise:
 - A string-keyed field name (group-by, domain, selection) just stops resolving.
 
 Tests and warning gates do not catch these. Run `tools/check_migrate_v20.py` and read its output.
+
+## 20.0 final delta (Fx.1 — on top of every saas-19.4 section)
+
+Ten source-confirmed changes between the tested saas-19.4 pins and released `20.0`. Two are
+program-wide. Run the checker with `--odoo-ref origin/20.0 --odoo-base-ref <saas pin>`: kinds
+`fa-icon`, `owl-ref`, `ctrl-hook`, `py-import` exist for exactly these and stay quiet on a
+saas-19.4 target.
+
+### F1. Font Awesome is gone — icons are Material Symbols (program-wide, 53 modules)
+
+`web.fontawesome` left `addons/web/__manifest__.py`; `font-awesome.css` is deleted (only the
+`.ttf` survives for reports); core `fa fa-` view files went 818 → 0 and `icon="fa-…"` 313 → 0.
+Bundles: `web.material_symbols_outlined` / `_rounded` / `_sharp`
+(`web/static/src/libs/materialsymbols/`). `ViewButton.iconFromString` has one branch left:
+`class="o_button_icon oi"` + `data-icon=<string>` (`view_button.js:24-30`), so `icon="fa-check"`
+renders the literal ligature name and `class="fa fa-check"` renders an empty element. No compat.
+
+```xml
+<!-- BEFORE -->
+<i class="fa fa-lock"/>                     <button icon="fa-pencil-square-o" …/>
+<!-- AFTER (core sale_order_views.xml:434-451, chatter.xml:33) -->
+<i class="oi" data-icon="lock"/>            <button icon="edit_square" …/>
+<i class="oi oi-fw" data-icon="search" role="img"/>   <!-- fixed width -->
+```
+
+Rename table derived from core's own diff (5643 unambiguous hunk pairs across `odoo` +
+`enterprise`; `n/m` = pairs agreeing / pairs seen). Icons we use, most frequent first:
+
+| FA | Material | | FA | Material | | FA | Material |
+|---|---|---|---|---|---|---|---|
+| `fa-check` | `check` 213/213 | | `fa-times`, `fa-remove` | `close` 101/105 | | `fa-arrow-right` | `arrow_forward` 37/38 |
+| `fa-ban` | `block` 16/16 | | `fa-search` | `search` 38/41 | | `fa-check-square-o` | `check_box` 9/9 |
+| `fa-globe` | `public` 62/62 | | `fa-info-circle` | `info` 87/87 | | `fa-quote-right`, `fa-quote-left` | `format_quote` 20/20 |
+| `fa-link` | `link` 61/61 | | `fa-exclamation-triangle`, `fa-warning` | `warning` 102/102 | | `fa-download` | `download` 72/72 |
+| `fa-angle-right` / `-left` | `keyboard_arrow_right` / `_left` | | `fa-long-arrow-right` | `east` 59/66 | | `fa-edit`, `fa-pencil` | `edit` 112/112 |
+| `fa-chevron-up` / `-down` | `expand_less` / `expand_more` | | `fa-chevron-left` / `-right` | `chevron_left` / `chevron_right` | | `fa-refresh` | `refresh` 88/95 |
+| `fa-cubes` | `inventory_2` 16/19 | | `fa-cube` | `deployed_code` 11/11 | | `fa-square-o` | `square` 3/4 |
+| `fa-clock-o` | `schedule` 89/90 | | `fa-tag` | `label` 13/14 | | `fa-tags` | `sell` 13/13 |
+| `fa-plus-square-o` | `add_box` | | `fa-plus-circle` | `add_circle` 9/9 | | `fa-plus` | `add` 76/77 |
+| `fa-whatsapp` | `oi_whatsapp` 22/22 | | `fa-video-camera` | `videocam` 11/13 | | `fa-external-link` | `open_in_new` 36/36 |
+| `fa-phone` | `phone` 56/57 | | `fa-upload` | `upload` 32/32 | | `fa-smile-o` | `sentiment_satisfied` 4/4 |
+| `fa-filter` | `filter_alt` 24/25 | | `fa-thumb-tack` | `push_pin` 7/7 | | `fa-building-o` | `business` 26/26 |
+| `fa-save`, `fa-floppy-o` | `save` | | `fa-truck` | `local_shipping` 23/23 | | `fa-calendar-check-o` | `event_available` |
+| `fa-cloud` | `cloud` | | `fa-file-o` | `description` | | `fa-exchange` | `swap_horiz` 13/19 |
+| `fa-user`, `fa-user-o` | `person` 32/32 | | `fa-users`, `fa-group` | `group` 44/44 | | `fa-linkedin` | `oi_linkedin` 31/31 |
+| `fa-print` | `print` 29/29 | | `fa-star`, `fa-star-o` | `star` 247/249 | | `fa-folder`, `fa-folder-o` | `folder` |
+| `fa-paperclip` | `attach_file` 16/16 | | `fa-lock` | `lock` 26/27 | | `fa-github` | `oi_github` 10/10 |
+| `fa-paper-plane`, `-o` | `send` 27/27 | | `fa-calculator` | `calculate` | | `fa-play` | `play_arrow` 14/14 |
+| `fa-calendar`, `fa-calendar-o` | `calendar_today` 81/81 | | `fa-circle` | `circle` 45/47 | | `fa-thumbs-up`, `fa-thumbs-o-up` | `thumb_up` 19/19 |
+| `fa-thumbs-down` | `thumb_down` | | `fa-twitter` | `oi_x` 33/33 | | `fa-flag`, `fa-flag-o` | `flag` |
+| `fa-eye` | `visibility` 44/44 | | `fa-eye-slash` | `visibility_off` 26/26 | | `fa-wrench` | `build` 69/70 |
+| `fa-list-ol` | `format_list_numbered` | | `fa-list` | `format_list_bulleted` 25/25 | | `fa-hashtag` | `tag` 4/4 |
+| `fa-archive` | `archive` 17/17 | | `fa-copy`, `fa-files-o` | `content_copy` | | `fa-line-chart` | `show_chart` 7/7 |
+| `fa-file-text` | `article` 7/7 | | `fa-money` | `payments` 33/35 | | `fa-magic` | `wand_stars` 10/10 |
+| `fa-eyedropper` | `colorize` | | `fa-picture-o`, `fa-image` | `image` | | `fa-gears` | `settings_applications` |
+| `fa-trash`, `fa-trash-o` | `delete` 122/132 | | `fa-comments`, `-o` | `forum` 34/34 | | `fa-random` | `shuffle` 6/6 |
+| `fa-table` | `table_chart` | | `fa-stop` | `stop` | | `fa-expand` | `expand_content` 9/9 |
+| `fa-credit-card` | `credit_card` 22/23 | | `fa-heart-o` | `favorite` | | `fa-code` | `code` 11/11 |
+| `fa-book` | `book` 26/26 | | `fa-exclamation-circle` | `error` 20/20 | | `fa-map-o` | `map` |
+| `fa-shield` | `security` | | `fa-pencil-square-o` | `edit_square` 52/54 | | `fa-scissors` | `content_cut` |
+| `fa-cog` | `settings` (core also `more_vert` on dropdown toggles, 29/61 — decide per site) | | `fa-comment-o` | `chat_bubble` | | `fa-camera` | `photo_camera` |
+| `fa-bold` / `-italic` / `-underline` | `format_bold` / `format_italic` / `format_underline` | | `fa-file-pdf-o` | `picture_as_pdf` 19/19 | | `fa-share` | `share` |
+| `fa-check-circle` | `check_circle` 49/50 | | `fa-pause` | `pause` | | `fa-arrow-circle-right` | `arrow_circle_right` |
+| `fa-instagram` | `oi_instagram` 36/36 | | `fa-pinterest` | `oi_pinterest` | | `fa-facebook` | `oi_facebook` 29/29 |
+| `fa-signal` | `android_cell_5_bar` | | `fa-area-chart` | `area_chart` 15/15 | | `fa-crosshairs` | `my_location` |
+| `fa-tasks` | `clear_all` 11/16 | | `fa-bars` | `menu` 73/74 | | `fa-th-large` / `fa-th-list` | `view_module` / `view_list` |
+| `fa-envelope`, `-o` | `mail` 67/67 | | `fa-step-forward` | `skip_next` | | `fa-sliders` | `tune` 37/37 |
+| `fa-caret-down` | `arrow_drop_down` 67/67 | | `fa-angle-double-up` | `keyboard_double_arrow_up` | | `fa-home` | `home` 20/20 |
+| `fa-asterisk` | `emergency` | | `fa-sign-in` | `login` | | `fa-clipboard` | `assignment` 18/19 |
+| `fa-rotate-left` | `undo` | | `fa-qrcode` | `qr_code` | | `fa-spinner`, `fa-circle-o-notch` | `progress_activity` / `autorenew` 76/78 |
+| `fa-plane` | `travel` 17/17 | | `fa-calendar-times-o` | `event_busy` | | `fa-minus` | `remove` 16/16 |
+| `fa-list-alt` | `list_alt` | | `fa-arrow-left` | `arrow_back` | | `fa-language` | `translate` |
+
+Core never migrated these (pick by hand from the Material Symbols set; social brands use the
+`oi_*` glyphs of `odoo_ui_icons`): `fa-telegram`, `fa-envelope-square`, `fa-paste`,
+`fa-superpowers`, `fa-dedent`, `fa-indent`, `fa-slack`, `fa-arrows-v`, `fa-arrows-h`,
+`fa-youtube`, `fa-bar-chart-o`, `fa-volume-control-phone`, `fa-wechat`, `fa-angle-double-down`,
+`fa-percent`, `fa-tint`, `fa-file-excel-o`, `fa-sort-numeric-asc`, `fa-facebook-official`, `fa-vk`,
+`fa-twitch`, `fa-columns`, `fa-product-hunt`, `fa-font-awesome`, `fa-plus-minus`,
+`fa-fast-forward`, `fa-bell-o`, `fa-terminal`.
+
+Sizing modifiers: `fa-fw` → `oi-fw`; `fa-2x` etc. → a font-size class. Checker `fa-icon` reports
+one finding **per file** with the icon names; a clean run means the markup changed, not that the
+glyph is the right one — walk the screen.
+
+### F2. OWL refs: `useRef`, `t-custom-ref` and the ref hooks left the compat layer
+
+`owl3_compatibility_layer.js` at 20.0 no longer assigns `owl.useRef`, `owl.onRendered`,
+`owl.provideEnv`, `owl.useChildEnv`, `owl.useChildSubEnv`, `owl.useExternalListener`, and no
+longer registers `t-custom-ref` (core 397 files → 0; `t-ref="this.…"` in 100 `web` files).
+`@web/owl2/utils` exports only `onWillRender render useEnv useLayoutEffect useSubEnv`.
+`@web/core/utils/hooks` lost `useChildRef`, `useForwardRefToParent`, `useRefListener`,
+`useServiceProtectMethodHandling`. `owl.d.ts` itself did not change — this is all compat.
+
+```js
+// BEFORE (saas-19.4)
+import { useRef } from "@web/owl2/utils";
+setup() { this.root = useRef("root"); }             // template: t-custom-ref="root"
+// AFTER (20.0, core action_swiper.js:43 / .xml:5)
+import { signal } from "@odoo/owl";
+root = signal.ref();                                 // template: t-ref="this.root"
+// `this.root.el` still reads the element.
+
+// BEFORE — forwarded ref
+import { useForwardRefToParent } from "@web/core/utils/hooks";
+this.modalRef = useForwardRefToParent("modalRef");
+// AFTER (core dialog.js:66-74)
+modalRef = useProps.static("modalRef", t.signal(t.ref()).optional(() => signal.ref()));
+
+// BEFORE                                            // AFTER
+import { useChildSubEnv } from "@web/owl2/utils";    import { useSubEnv } from "@web/owl2/utils";
+useChildSubEnv({ inDialog: true });                  useSubEnv({ inDialog: true });
+```
+
+`onRendered` has no drop-in; core rewrote its four sites to `onMounted` / `useEffect`
+(`dropdown_popover.js`). A hyphenated `t-custom-ref="start-date"` needs a JS identifier
+(`startDate`). Kinds: `owl-ref` (template half), `js-symbol` (JS half, with hints).
+
+### F3. `@web/webclient/actions/action_service` → `action_plugin`
+
+```js
+// BEFORE
+import { standardActionServiceProps } from "@web/webclient/actions/action_service";
+// AFTER (action_plugin.js:101)
+import { standardActionServiceProps } from "@web/webclient/actions/action_plugin";
+```
+
+### F4. Portal counters: `_prepare_home_portal_values` is dead — override `_prepare_portal_counter_values`
+
+`addons/portal/controllers/portal.py` at 20.0 has no `_prepare_home_portal_values`. Counters
+are a jsonrpc route `/my/counters` → `counters(self, counters, **kw)` (`:203-228`) that asks
+`_prepare_portal_counter_values(self, counter)` (`:193-201`) for `(model_name, domain, access)`
+and runs one `search_count` per badge; `home()` calls `self.counters({})`; results are cached as
+booleans in `request.session['portal_counters']`, which `portal.portal_docs_entry` reads for card
+visibility. The `portal.entry` records already exist on saas-19.4 — only the hook moves.
+
+```python
+# BEFORE (saas-19.4)
+def _prepare_home_portal_values(self, counters):
+    values = super()._prepare_home_portal_values(counters)
+    if "pwm_count" in counters:
+        values["pwm_count"] = request.env["password.key"].search_count(domain) if allowed else 0
+    return values
+# AFTER (20.0, core sale/controllers/portal.py:16-22)
+def _prepare_portal_counter_values(self, counter):
+    if counter == "pwm_count":
+        return "password.key", domain, "read"      # access: a right name, or 'sudo'
+    return super()._prepare_portal_counter_values(counter)
+```
+
+An unported override is **never called**: no error, counter stays 0, the card is `d-none`. Kind
+`ctrl-hook`. Fx.4 must assert over HTTP that `/my` renders each card with a non-zero counter.
+
+### F5. `odoo.tools.constants.PREFETCH_MAX` is gone
+
+`PREFETCH_MAX = 1000` (`odoo/tools/constants.py:13` on saas) has no definition anywhere under
+`odoo/` at 20.0. A module-level `from odoo.tools.constants import PREFETCH_MAX` fails the whole
+addon at import. Define the constant locally. Kind `py-import` (generic: any name importable at
+the base ref and gone at the target).
+
+### F6. `ir.attachment` file-store methods are record-based
+
+| saas-19.4 | 20.0 (`odoo/addons/base/models/ir_attachment.py`) |
+|---|---|
+| `_file_read(self, fname)` | `_file_read(self)` — `LocalBinaryFile(self)`, reads `self.store_fname` (`:145-151`) |
+| `_file_write(self, bin_value, checksum)` | `_file_write(self, fname, bin_value: io.IOBase)` |
+| `_get_path(self, file, sha)` | `_file_fname(self, sha)` |
+| `_set_attachment_data(self, get_data)` | removed |
+| `_gc_file_store_unsafe(self)` | `_gc_file_store_unsafe(self, grace_period)` |
+| `LocalBinaryFile(path, model)` | `LocalBinaryFile(record)` |
+
+Core's only caller is `attach._file_read()` in `_compute_raw` (`:382`). An override that still
+takes `fname` (and calls `super()._file_read(fname=…)`) is a `TypeError` on every attachment read.
+
+### F7. `HrAttendance.scan_barcode` absorbed the geolocation route
+
+`hr_attendance/controllers/main.py:297`: `scan_barcode(self, token, barcode, latitude=False, longitude=False, check_in_image=None)`
+now owns `/hr_attendance/attendance_barcode_scanned`; `scan_barcode_with_geolocation` is gone. The
+kiosk calls it through `makeRpcWithGeolocation('attendance_barcode_scanned', …)`
+(`public_kiosk_app.js:228`). An override without `latitude` / `longitude` is a `TypeError`; a
+`super().scan_barcode_with_geolocation()` is an `AttributeError`. Kind `ctrl-hook`.
+
+### F8. `mail_attachment_delete` is a batch call
+
+`mail/controllers/attachment.py:112`: `mail_attachment_delete(self, access_token_by_attachment_id, keep_on_messages=False)`
+replaces `(self, attachment_id, access_token=None)`. The JS sends a dict keyed by attachment id.
+Re-declare the route with the new parameters and iterate. Kind `ctrl-hook`.
+
+### F9. `sale.crm_team_salesteams_view_form` is gone
+
+`sale` no longer extends the team form (`sale/views/crm_team_views.xml` keeps only
+`crm_team_view_kanban_dashboard`). Inherit `sales_team.crm_team_view_form` directly — it still has
+the `<notebook>` (`sales_team/views/crm_team_views.xml:21,57`). Kind `view-xmlid` with the hint.
+
+### F10. Verified unchanged (do not re-port)
+
+All 31 external manifest deps and 58 inherited core models exist; no removed field is used by
+`tools` / `system`; `mail/tools/discuss.py` has no def drift; `mail_thread.py` only gained
+methods (plus `force_direct_send=` on `_web_push_send_notification`); `ir_config_parameter.py`
+unchanged; `odoo.tools.safe_eval` is a package whose `__all__` still exports `safe_eval`,
+`datetime`, `dateutil`, `time`, `wrap_module`; `odoo.tools` star re-exports (`email_normalize`,
+`replace_exceptions`, `file_open`, …) hold; `MIN_PY_VERSION = (3, 12)` and `MIN_PG_VERSION = 16`
+are identical on both pins; `requirements.txt` only dropped `xlwt`. Docker Hub has no `odoo:20.0`
+image (2026-09-28) — keep the source-overlay image.
 
 ## Dead-override check (run this first, every module)
 
@@ -1087,6 +1303,11 @@ Restored on `owl.*` (also re-exported from `@web/owl2/utils`): `Component` wrapp
 
 **Not** restored: `useState`, `reactive`, `loadFile`, `validate`.
 
+**20.0 shrank this list** (final delta F2): `useRef`, `useChildSubEnv`, `useComponent`,
+`useExternalListener`, `onRendered`, `provideEnv`, `useChildEnv` and the `t-custom-ref` directive
+are gone from the compat layer; `@web/owl2/utils` keeps only `onWillRender`, `render`, `useEnv`,
+`useLayoutEffect`, `useSubEnv`. A saas-19.4 port that leaned on those shims ports again at Fx.1.
+
 Still native on OWL 3 (safe to keep importing): `Component`, `onWillStart`,
 `onWillUpdateProps`, `onMounted`, `onPatched`, `onWillUnmount`, `onWillDestroy`, `markup`,
 `mount`, `xml`, `status`, `toRaw`, `useEffect` (see signature below).
@@ -1367,6 +1588,14 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `access-op` | `ir.access.operation` is not a `CRUD_SELECTION` key. Letters stay in `crud` order (`cr` not `rc`). saas rejects the CSV (`Value 'rc' not found`) |
 | `field-lit` | a literal use of a removed field name (`datas`, `product_uom`), leftover `resource_calendar_id.tz`, leftover `timezone(self.tz)` on a calendar method (`20_16` Gx.5 `_ba_attendance_intervals`), or `<field name="tz">` on a `resource.calendar` record (successor `resource.mixin.tz` — `20_16` Layer-1 demo died `Invalid field 'tz'`) |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
+| `fa-icon` | (20.0) Font Awesome markup (`fa fa-…`, `icon="fa-…"`, bare `fa-…` token) in a `.xml` / `.js` / `.py` file while the target has neither the `web.fontawesome` bundle nor `font-awesome.css`. **One finding per file** with the icon names; `static/lib` excluded. Quiet on a saas-19.4 target |
+| `owl-ref` | (20.0) `t-custom-ref="x"` in our `static/src` template or inline `xml\`` while the target compat no longer registers the directive. Successor `x = signal.ref()` + `t-ref="this.x"`. The JS half (`useRef`, `useChildRef`, `useForwardRefToParent`, `onRendered`, `useChildSubEnv`) is `js-symbol` with hints |
+| `ctrl-hook` | an override on a class imported from `odoo.addons` (controllers), resolved through our own addons to the core base (`documentation_builder` → `knowsystem_website` → `portal`), whose base method existed at the **base** ref and is gone at the target (`_prepare_home_portal_values`, `scan_barcode_with_geolocation`) — never called / `AttributeError` on `super()` — or whose target signature has parameters the override does not accept (`scan_barcode` `latitude`, `mail_attachment_delete` `access_token_by_attachment_id`). Judged against **our** override, so a saas-era rename the port already adopted stays quiet; `**kwargs` accepts anything |
+| `py-import` | `from odoo.<x> import NAME` where NAME is importable at the **base** ref and not at the target (`PREFETCH_MAX`), or the module itself is gone — an `ImportError` at module load that fails the whole addon. Resolves star re-exports one level (`odoo/tools/__init__.py`, the `safe_eval` package) and stays quiet when neither ref shows the name (resolver limit, not a finding) |
+
+`js-import` carries a successor hint for moved files (`MOVED_JS_PATHS`: `action_service` →
+`action_plugin`) and `view-xmlid` for removed views with a known replacement
+(`VIEW_XMLID_HINTS`: `sale.crm_team_salesteams_view_form` → `sales_team.crm_team_view_form`).
 
 Always pass `--odoo-base-ref`. Without it the hook check cannot tell a fresh removal from an
 override that was already dead, and reports both the same way.
@@ -1608,7 +1837,12 @@ These are not settled by source reading. Do not write them into a port as fact:
   asset gate).
 - Remaining field renames inside surviving models (read the registry after a fresh install).
 - Whether 20.0's optional-product rule on `sale.order.line` affects your line creation.
-- Attendance access-rights and geolocation RPC changes for kiosk-facing code.
+- Attendance access-rights for kiosk-facing code (the geolocation RPC shape itself is settled:
+  final delta F7).
+- Which Material glyph replaces an icon core never migrated (F1's unmapped list) — walk the
+  screen; the checker only proves the markup changed.
+- Portal card visibility after F4 — `/my` over HTTP with a non-zero counter, not a unit test on
+  the hook.
 - Which deprecation warnings **your** code actually triggers (test-window log on the pinned image).
 - Portal sharing `get_views` on the **running** worker (arch vs `fields_get` for `x_oz_*` / other
   `TASK_PORTAL_*` extras). A new shell process resets `@ormcache(cache='stable')` and is not that
@@ -2367,3 +2601,16 @@ without evidence does not belong in this rule.
   the English source. Keep `_ensure` for settings jsonb.
   `cr.commit()` stays forbidden. Do not claim flush-alone
   is HTTP proof.
+- *(2026-09-28, phase 6 item 31 — released `20.0` vs the saas-19.4 pins)* Ten
+  source-confirmed changes, recorded as **20.0 final delta** F1–F10 above
+  (`ai_rules_fao/docs/20-final-delta.md`). Two are program-wide: Font Awesome
+  is gone (53 modules, 98 button icons, 747 class sites; rename table derived
+  from 5643 core diff pairs) and the compat layer dropped `useRef` /
+  `t-custom-ref` / the ref hooks (9 JS files, 32 template sites). The checker
+  found 3 of the 10 by itself; the six it missed were controller hooks
+  (`dead-hook` resolves models only), a removed module constant, and markup
+  it never looked at. New kinds `fa-icon`, `owl-ref`, `ctrl-hook`, `py-import`;
+  all four run quiet against the saas-19.4 pin and report 255 findings on
+  `tools-20_port` against `origin/20.0` (212 files / 32 / 9 / 2). `py-import`
+  also caught a second `PREFETCH_MAX` site (`cloud_base/models/clouds_folder.py:11`)
+  that the manual pass missed.
