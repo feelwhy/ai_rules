@@ -23,6 +23,9 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`). Febado: `febado/scripts/docker-dev.sh logs` (Cursor tab `febado Odoo logs`) |
 | sync images/dbs | `faotools_env/local/env-sync.sh` (downloads **and** restores + neutralizes) |
 | is \<target\> ready to launch? | `faotools_env/local/env-prepare.sh --check` |
+| stop \<target\> / stop everything | `env-down.sh <target>` / `env-down.sh` (all targets; add `--remove` for a teardown with its volume) |
+| clean up / free space / WSL is too big | `env-gc.sh` (dry run) → report → `env-gc.sh --apply`; then point the user to `local/windows/compact-wsl-disks.ps1` (elevated PowerShell, shuts WSL down) |
+| keep this review DB / drop it | `env-review.sh keep <db> --hours N` / `env-review.sh down <db>` |
 | launch / start febado | febado `scripts/docker-dev.sh start` (no `--no-logs`) + febado local Docker rules — not `env-up`. Same Cursor log tab as faOtools (`febado Odoo logs`) |
 | test febado module | febado `scripts/test.sh` (in-repo) |
 | commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
