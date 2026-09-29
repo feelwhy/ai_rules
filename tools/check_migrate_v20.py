@@ -3119,13 +3119,15 @@ def check_fa_icons(repo: str, module: str, target: Target) -> list[Finding]:
     per-site list would drown every other kind. Successor per icon is a rename table
     (rule 22); the markup change is mechanical: `<i class="fa fa-X"/>` ->
     `<i class="oi" data-icon="<material>"/>`, `icon="fa-X"` -> `icon="<material>"`.
+    `migrations/` is skipped: those files name the old tokens in order to rewrite them.
     """
     if not _target_fontawesome_gone(target):
         return []
     out: list[Finding] = []
     for full, rel in walk(repo, module, ".xml", ".js", ".py"):
         rel_posix = rel.replace(os.sep, "/")
-        if "/static/lib/" in rel_posix:
+        # A migration names the old tokens in order to rewrite them.
+        if "/static/lib/" in rel_posix or "/migrations/" in rel_posix:
             continue
         first_line = 0
         sites = 0
