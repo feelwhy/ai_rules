@@ -89,6 +89,10 @@ phase-1 analysis proved are findable statically:
                     ._prepare_home_portal_values, HrAttendance.scan_barcode, ...)
   py-import         `from odoo.<x> import NAME` importable at the base ref and gone at the
                     target (PREFETCH_MAX left odoo.tools.constants) — ImportError at load
+  owl-static-props  (20.0) `static props` / `static defaultProps` on our component while the
+                    target compat throws at construction (successor `props = useProps({...})`)
+  env-removed       (20.0) `env.isSmall` / `env.debug` read while the target env Proxy throws
+                    for that key (successor uiService.isSmall / DebugModePlugin)
 
 Design notes that matter (learned the hard way in phase 1):
 
@@ -3195,6 +3199,104 @@ def check_owl_refs(repo: str, module: str, target: Target) -> list[Finding]:
     return out
 
 
+OWL_STATIC_PROPS_RE = re.compile(r"^\s*static\s+(props|defaultProps)\s*=")
+
+
+def _target_static_props_throw(target: Target) -> bool:
+    """20.0 compat throws on a static props/defaultProps schema (OWL 3 ignores it).
+
+    saas-19.4 compat still read `this.constructor.props` (160 core files declared
+    `static props`); 20.0 raises `Component "X" defines a static "props" or
+    "defaultProps", which Owl 3 ignores` at construction (compat layer :44-48).
+    """
+    compat = target.odoo.show("addons/web/static/src/owl2/owl3_compatibility_layer.js")
+    return bool(compat) and "defines a static" in compat
+
+
+def check_owl_static_props(repo: str, module: str, target: Target) -> list[Finding]:
+    """`static props = ...` / `static defaultProps = ...` in our components (F12).
+
+    Blocking at runtime: the component never constructs, so the whole view it sits
+    in dies (20_2: `ContactInfoField` on every partner / employee / lead form).
+    Successor: instance `props = useProps({...})` with `t.*` types from `@odoo/owl`;
+    a subclass of a core component that only spread the parent (`{ ...X2ManyField.props }`)
+    drops the line — the parent's `props = useProps(...)` is inherited.
+    """
+    if not _target_static_props_throw(target):
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".js"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/lib/" in rel_posix or "/static/" not in rel_posix:
+            continue
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            m = OWL_STATIC_PROPS_RE.match(line)
+            if not m:
+                continue
+            spread = re.search(r"\.\.\.\s*([A-Z]\w*)\.props", line)
+            if spread:
+                successor = (f"drop the line ({spread.group(1)} declares `props = useProps(...)`, "
+                             f"inherited) or `props = useProps({{ ...{spread.group(1)[0].lower()}"
+                             f"{spread.group(1)[1:]}Props, extra: t.x() }})`")
+            else:
+                successor = ("`props = useProps({ name: t.string(), onX: t.function(), "
+                             "flag: t.boolean().optional(), slots: t.object().optional() })` "
+                             "(t, useProps from @odoo/owl)")
+            out.append(Finding(
+                "owl-static-props", module, rel, lineno,
+                f"`static {m.group(1)}`: OWL 3 ignores it and the 20.0 compat layer throws "
+                f"at construction, so every view holding this component dies. "
+                f"Successor: {successor}.",
+            ))
+    return out
+
+
+ENV_REMOVED_KEYS_RE = re.compile(r"const REMOVED_KEYS\s*=\s*\{(.*?)\n\};", re.S)
+ENV_REMOVED_SUCCESSORS = {
+    "isSmall": ('`this.uiService.isSmall` after `this.uiService = useService("ui")` in a component '
+                "(CogMenu already has it), `env.services.ui.isSmall` with a plain env"),
+    "debug": "`usePlugin(DebugModePlugin)` in a component or plugin, `odoo.debug` outside one",
+}
+
+
+def _target_env_removed_keys(target: Target) -> list[str]:
+    """Keys the 20.0 env Proxy throws on (`web/static/src/env.js` REMOVED_KEYS, F13)."""
+    src = target.odoo.show("addons/web/static/src/env.js") or ""
+    m = ENV_REMOVED_KEYS_RE.search(src)
+    if not m:
+        return []
+    return re.findall(r"^\s*(\w+)\s*:", m.group(1), re.M)
+
+
+def check_env_removed(repo: str, module: str, target: Target) -> list[Finding]:
+    """`env.isSmall` / `env.debug` reads on a target whose env throws for them (F13).
+
+    saas-19.4 defined `env.isSmall` as a getter (`ui_service.js:257`); 20.0's `makeEnv`
+    is a Proxy that throws with the replacement in the message. A template
+    `t-att-class="this.env.isSmall ? ..."` kills the whole control panel (20_2 pin button
+    in `web.FormCogMenu` -> every form view showed "Oops!").
+    """
+    keys = _target_env_removed_keys(target)
+    if not keys:
+        return []
+    pattern = re.compile(r"\benv\.(%s)\b" % "|".join(map(re.escape, keys)))
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".js", ".xml"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/lib/" in rel_posix or "/static/" not in rel_posix:
+            continue
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            for m in pattern.finditer(line):
+                key = m.group(1)
+                out.append(Finding(
+                    "env-removed", module, rel, lineno,
+                    f"`env.{key}` is gone at the target: web/static/src/env.js REMOVED_KEYS "
+                    f"throws on read (it was a getter on saas-19.4). Successor: "
+                    f"{ENV_REMOVED_SUCCESSORS.get(key, 'see the REMOVED_KEYS message')}.",
+                ))
+    return out
+
+
 PY_ADDONS_IMPORT_RE = re.compile(r"^odoo\.addons\.([a-z_][\w]*)(?:\.(.*))?$")
 
 
@@ -3513,7 +3615,8 @@ def main() -> int:
                                    "owl-xpath,owl-tref,owl-this,owl-hook,python-api,patch-target,"
                                    "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
                                    "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc,"
-                                   "data-base64,fa-icon,owl-ref,ctrl-hook,py-import)")
+                                   "data-base64,fa-icon,owl-ref,ctrl-hook,py-import,"
+                                   "owl-static-props,env-removed)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -3541,7 +3644,7 @@ def main() -> int:
         "view-xmlid", "view-anchor", "qweb-tcall", "security-model", "access-or",
         "access-grant", "access-op", "field-lit",
         "manifest-version", "calendar-attr", "qweb-tesc", "data-base64",
-        "fa-icon", "owl-ref", "ctrl-hook", "py-import",
+        "fa-icon", "owl-ref", "ctrl-hook", "py-import", "owl-static-props", "env-removed",
     }
 
     if not args.quiet:
@@ -3603,6 +3706,10 @@ def main() -> int:
             fs += check_ctrl_hooks(args.repo, module, target, base, own)
         if "py-import" in want:
             fs += check_py_imports(args.repo, module, target, base, own)
+        if "owl-static-props" in want:
+            fs += check_owl_static_props(args.repo, module, target)
+        if "env-removed" in want:
+            fs += check_env_removed(args.repo, module, target)
         if kinds:
             fs = [f for f in fs if f.kind in kinds]
         findings += fs
@@ -3614,7 +3721,7 @@ def main() -> int:
         for f in findings:
             by_kind[f.kind].append(f)
         for kind in ("dead-hook", "ctrl-hook", "py-import", "js-import", "js-symbol", "owl-ref",
-                     "owl-xpath", "owl-tref",
+                     "owl-static-props", "env-removed", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
                      "view-anchor", "qweb-tcall", "qweb-tesc", "data-base64", "calendar-attr", "security-model",
                      "access-or", "access-grant", "access-op", "field-lit", "fa-icon",

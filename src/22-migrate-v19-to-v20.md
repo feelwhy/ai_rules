@@ -70,10 +70,13 @@ Tests and warning gates do not catch these. Run `tools/check_migrate_v20.py` and
 
 ## 20.0 final delta (Fx.1 — on top of every saas-19.4 section)
 
-Ten source-confirmed changes between the tested saas-19.4 pins and released `20.0`. Two are
+Twelve source-confirmed changes between the tested saas-19.4 pins and released `20.0` (F1–F10
+from the tree diff, F11 from the first matrix, F12–F13 from the first 20.0 review DB). Four are
 program-wide. Run the checker with `--odoo-ref origin/20.0 --odoo-base-ref <saas pin>`: kinds
-`fa-icon`, `owl-ref`, `ctrl-hook`, `py-import` exist for exactly these and stay quiet on a
-saas-19.4 target.
+`fa-icon`, `owl-ref`, `ctrl-hook`, `py-import`, `owl-static-props`, `env-removed` exist for
+exactly these and stay quiet on a saas-19.4 target. A clean checker is not the gate for a review
+URL: open every group form in a browser first (F12 and F13 both passed the checker and killed
+every form view).
 
 ### F1. Font Awesome is gone — icons are Material Symbols (program-wide, 53 modules)
 
@@ -273,6 +276,59 @@ territory, and no upgrade path exists for a saas-fork database outside odoo.sh. 
 saas-19.4 database on 20.0. How the 20.0 cumulative base is created (proposal: the first green
 fresh 20.0 build) is an owner decision recorded in the `ai_rules_fao` ledger (6.33), not this rule.
 `custom_fields` never writes `index`, so nothing in `tools` changes.
+
+### F12. `static props` / `static defaultProps` throw at construction (program-wide, 23 modules)
+
+saas-19.4's compat layer still read `this.constructor.props` / `defaultProps`
+(`owl3_compatibility_layer.js:42-50`), which is why the section "`static props = { x: { type:
+Object } }` is still used in 160 core `web` files" below let it pass. 20.0's compat throws:
+`Component "X" defines a static "props" or "defaultProps", which Owl 3 ignores. Declare the props
+schema through "useProps" instead` (`owl3_compatibility_layer.js:44-48`). Core: 263 files use
+`props = useProps(schema)`, 0 use `static props`; the schema objects are exported as
+`x2ManyFieldProps`, `charFieldProps`, `standardFieldProps`, … with `t` types from `@odoo/owl`.
+The component never constructs, so the whole view holding it dies — on 20_2 every partner,
+employee and lead form ("Oops!" on `ContactInfoField`).
+
+```js
+// BEFORE
+export class ContactInfo extends Component {
+    static props = { contactElements: { type: Array }, onAdd: { type: Function }, readonly: { type: Boolean }, slots: { type: Object, optional: true } };
+}
+export class ContactInfoField extends X2ManyField {
+    static props = { ...X2ManyField.props };   // X2ManyField.props is undefined at 20.0 anyway
+}
+// AFTER (core x2many_field.js:26-44, tooltip.js:5-10)
+import { Component, t, useProps } from "@odoo/owl";
+export class ContactInfo extends Component {
+    props = useProps({
+        contactElements: t.array(), onAdd: t.function(), readonly: t.boolean().optional(),
+        slots: t.object().optional(),
+    });
+}
+export class ContactInfoField extends X2ManyField {}   // inherits props = useProps(x2ManyFieldProps)
+// extras on a core schema: props = useProps({ ...x2ManyFieldProps, extra: t.boolean().optional() })
+```
+
+`props = props(schema)` (saas-era instance form) still works at 20.0 (core keeps one:
+`property_selection.js:9`); do not rewrite it, but write `useProps` for new code. Kind
+`owl-static-props` (91 findings on `tools-20_port`; `system` 0).
+
+### F13. `env.isSmall` and `env.debug` throw (program-wide)
+
+saas-19.4 defined `env.isSmall` as a getter (`ui_service.js:257`). 20.0's `makeEnv` returns a
+Proxy whose `REMOVED_KEYS` (`web/static/src/env.js:16-24`) throw on read with the replacement in
+the message: `isSmall` → `useService("ui").isSmall` in a component (`this.uiService.isSmall`;
+`CogMenu` already sets `this.uiService`), `env.services.ui.isSmall` with a plain env, the
+`UIPlugin.isSmall()` signal in a plugin; `debug` → `usePlugin(DebugModePlugin)` in a component or
+plugin, `odoo.debug` outside one. A template read in a control-panel inherit
+(`t-att-class="this.env.isSmall ? …"` on the sticky-notes pin in `web.FormCogMenu`) killed every
+form view on the 20_2 review DB. Kind `env-removed` (3 findings on `tools-20_port`: sticky_notes,
+knowsystem ×2 — plus `joint_calendar` `!this.env.isSmall`).
+
+Two related 20.0 facts from the same review, not breaks: `FormRenderer.setup()` owns
+`this.state = proxy({})` for its compiler (`isStatusbarStickyPinned`) — a renderer patch must
+`Object.assign(this.state, {...})`, not replace the proxy (two patches replacing it kept only the
+last one's keys); and `owl="1"` on `<t t-name>` is still ignored (21 core templates carry it).
 
 ### F10. Verified unchanged (do not re-port)
 
@@ -1494,8 +1550,10 @@ surviving file. Checker kind: `js-symbol`.
 | `@html_builder/core/utils` | `BaseOptionComponent` | `@html_builder/core/base_option_component` |
 
 `static props = { x: { type: Object } }` is still used in 160 core `web` files on saas-19.4
-(compat `Component` wrapper). Do not rewrite props schemas in the same breath as `useState`
-unless a runtime error names them.
+(compat `Component` wrapper), so on a **saas-19.4** target do not rewrite props schemas in the
+same breath as `useState` unless a runtime error names them. On **20.0** that grace is gone:
+the compat throws at construction (F12) — every `static props` / `static defaultProps` becomes
+`props = useProps({...})` at Fx.1.
 
 ### Moved modules (import path only)
 
@@ -2635,3 +2693,20 @@ without evidence does not belong in this rule.
   `ir_model_fields.index` boolean → Selection (F11) and, after a hand mapping,
   in `mail_activity._compute_phone`. Recorded as F11: never `-u` a saas-fork
   database on 20.0; the cumulative-base decision sits with the owner.
+- *(2026-09-29, 20_2 Fx review DB — first 20.0 browser walk)* The pilot group passed
+  Fx.1 (checker clean but for `fa-icon`), Fx.2, 31 tests and a shell loader proof,
+  and then **every form view died in the browser**, twice: `this.env.isSmall` in the
+  sticky-notes pin inherit of `web.FormCogMenu` (F13, `env.js` REMOVED_KEYS Proxy),
+  then `static props` on `ContactInfo` / `ContactInfoField` (F12, compat throws at
+  construction). Both were legal on saas-19.4, so nothing in the saas-era rule or
+  checker flagged them; the `owl-this` kind even documents `env.isSmall` as a
+  *bare-ident* case only. New kinds `owl-static-props` (91 on `tools-20_port`, 23
+  modules) and `env-removed` (3) fire on the pre-fix 20_2 tree and stay quiet on the
+  saas pin. Process consequence: **a group's review URL is handed only after a
+  headless-browser first-click of every group form and menu on the 20.0 image**
+  (selenium/standalone-chromium on the docker network, BiDi console capture, no
+  `.o_error_dialog`); tests and shell counts do not exercise OWL construction. The
+  same walk found a Layer-2 defect older than the port: the "Obsolete product"
+  alert domain matched `ODS-900` while the loader put core `product_order_01`
+  (`FURN_9999`) on S00001, so the sale-order alert never fired on any serie
+  (`system` `odootools_demo/models/demo_notes_alerts.py`).
