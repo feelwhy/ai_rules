@@ -1525,6 +1525,19 @@ Re-declare the route with the new parameters and iterate. Kind `ctrl-hook`.
 `crm_team_view_kanban_dashboard`). Inherit `sales_team.crm_team_view_form` directly — it still has
 the `<notebook>` (`sales_team/views/crm_team_views.xml:21,57`). Kind `view-xmlid` with the hint.
 
+### F11. A saas-19.4 database cannot be `-u`'d onto 20.0 — rebuild, do not migrate
+
+`ir.model.fields.index` is `Boolean` on saas-19.4 and `Selection(FIELD_INDEX_TYPES)`
+(`btree` / `btree_not_null` / `trigram`) at 20.0 (`ir_model.py:572-576,613`). Loading `base` on
+a saas database converts the column to `varchar` with `'true'` / `'false'`, `_instanciate_attrs`
+passes that string into every **manual** field (`:1494`), and `Registry.check_indexes` asserts
+(`registry.py:920`) while loading `web`. Mapping the values by hand only moves the failure to the
+next core hole (`mail_activity._compute_phone` → `KeyError: 'crm.lead'`). That is upgrade-script
+territory, and no upgrade path exists for a saas-fork database outside odoo.sh. Do not `-u` a
+saas-19.4 database on 20.0. How the 20.0 cumulative base is created (proposal: the first green
+fresh 20.0 build) is an owner decision recorded in the `ai_rules_fao` ledger (6.33), not this rule.
+`custom_fields` never writes `index`, so nothing in `tools` changes.
+
 ### F10. Verified unchanged (do not re-port)
 
 All 31 external manifest deps and 58 inherited core models exist; no removed field is used by
@@ -3879,6 +3892,13 @@ without evidence does not belong in this rule.
   `tools-20_port` against `origin/20.0` (212 files / 32 / 9 / 2). `py-import`
   also caught a second `PREFETCH_MAX` site (`cloud_base/models/clouds_folder.py:11`)
   that the manual pass missed.
+- *(2026-09-29, phase 6 item 32 — first matrix on the 20.0 image)* Fresh all-apps
+  installs from `20_port` die at registry load on F5 (`PREFETCH_MAX`,
+  `joint_calendar`), the first 20.0 runtime reproduction. `-u all` on clones of
+  the saas-19.4 accumulated databases dies in **core** at `web` (7/211) on
+  `ir_model_fields.index` boolean → Selection (F11) and, after a hand mapping,
+  in `mail_activity._compute_phone`. Recorded as F11: never `-u` a saas-fork
+  database on 20.0; the cumulative-base decision sits with the owner.
 
 ## 30-command-vocabulary
 
