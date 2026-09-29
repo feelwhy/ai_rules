@@ -82,8 +82,12 @@ phase-1 analysis proved are findable statically:
   manifest-version  a serie-prefixed manifest version while --odoo-ref is a saas-* branch
   fa-icon           (20.0) Font Awesome markup in a file while the target has no
                     web.fontawesome bundle; one finding per file with the icon names
-  owl-ref           (20.0) t-custom-ref in our OWL template while the target compat no
-                    longer registers the directive (successor x = signal.ref() + t-ref="this.x")
+  owl-ref           (20.0) t-custom-ref / t-custom-model in our OWL template while the target
+                    compat no longer registers the directive (successor x = signal.ref() +
+                    t-ref="this.x"; native t-model / t-model.proxy)
+  owl-props-spread  `{ ...CoreClass.props, extra }` while CoreClass declares an instance
+                    props = useProps(...) at the target: the spread is ...undefined and the
+                    component keeps only its extras (successor ...coreClassProps)
   ctrl-hook         an override on a class imported from odoo.addons (controllers) whose base
                     method is gone or re-signed at the target (CustomerPortal
                     ._prepare_home_portal_values, HrAttendance.scan_barcode, ...)
@@ -1345,6 +1349,7 @@ def check_js(repo: str, module: str, target: Target, own_modules: set[str]) -> l
                                    f"patch({sym}) targets {spec}, which no longer resolves"))
         out += check_patch_shadow(module, rel, src, target, own_modules)
         out += check_js_symbols(module, rel, src, target, own_modules)
+        out += check_props_spread(module, rel, src, target, own_modules)
         out += check_gone_js_paths(module, rel, src)
         out += check_form_controller_template(module, rel, src)
         out += check_builder_options_template(module, rel, src)
@@ -1729,6 +1734,80 @@ def check_js_symbols(module: str, rel: str, src: str, target: Target,
                 "useEffect(fn, deps) from @odoo/owl: OWL 3 useEffect is "
                 "useEffect(fn) and ignores the deps array. Use useLayoutEffect "
                 "from @web/owl2/utils (compat OWL-2 semantics).",
+            ))
+    return out
+
+
+PROPS_SPREAD_RE = re.compile(r"\.\.\.\s*([A-Z][\w$]*)\.props\b")
+PROPS_SCHEMA_IDENT_RE = re.compile(r"\bprops\s*=\s*(?:useProps|props)\(\s*([A-Za-z_$][\w$]*)\s*\)")
+
+
+def _js_local_imports(src: str) -> dict[str, str]:
+    """Local name -> import spec for every named / default import in a JS file."""
+    out: dict[str, str] = {}
+    for m in JS_IMPORT_STMT_RE.finditer(src):
+        spec = m.group("spec")
+        if m.group("default"):
+            out.setdefault(m.group("default"), spec)
+        for part in (m.group("named") or "").split(","):
+            part = part.strip()
+            if not part or part == "type":
+                continue
+            local = part.split(" as ")[-1].strip()
+            out.setdefault(local, spec)
+    return out
+
+
+def _js_class_window(src: str, name: str) -> str:
+    """Source of `class <name>` up to the next top-level class / export (rough but enough)."""
+    m = re.search(r"\bclass\s+%s\b[^{]*\{" % re.escape(name), src)
+    if not m:
+        return ""
+    rest = src[m.end():]
+    nxt = re.search(r"\n(?:export\s+)?(?:class|const|function|let)\s", rest)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def check_props_spread(module: str, rel: str, src: str, target: Target,
+                       own_modules: set[str]) -> list[Finding]:
+    """`{ ...CoreClass.props, extra }` while CoreClass has no static props at the target (F12).
+
+    OWL 3 `makeProps(schema)` defines a getter per schema key and nothing else, so a
+    spread of `undefined` (every core component is instance `props = useProps(...)` at
+    20.0) leaves the component with only its extras: `this.props.record` / `.name` /
+    `.readonly` are undefined. The saas-era `GONE_JS_CALLS` entries cover the three
+    classes that were already instance-declared there; this is the general form.
+    """
+    out: list[Finding] = []
+    imports = _js_local_imports(src)
+    for lineno, line in enumerate(src.splitlines(), 1):
+        for m in PROPS_SPREAD_RE.finditer(line):
+            name = m.group(1)
+            if f"...{name}.props" in GONE_JS_CALLS:
+                continue  # saas-era hint already reports it with its own text
+            spec = imports.get(name)
+            if not spec or spec.lstrip("@").split("/")[0] in own_modules:
+                continue
+            core = target.js_source(spec)
+            if core is None:
+                continue  # js-import reports a gone path
+            window = _js_class_window(core, name)
+            if not window or re.search(r"\bstatic\s+props\s*=", window):
+                continue  # class not found here (re-export) or still static: nothing to say
+            ident = PROPS_SCHEMA_IDENT_RE.search(window)
+            if ident and re.search(r"^export\s+const\s+%s\b" % re.escape(ident.group(1)), core, re.M):
+                successor = (f"`props = useProps({{ ...{ident.group(1)}, extra: t.x() }})` "
+                             f"({ident.group(1)} is exported from {spec})")
+            else:
+                successor = (f"copy the keys of the inline `props = useProps({{...}})` of "
+                             f"{name} in {spec} (no exported schema), or subclass without "
+                             f"redeclaring props when there are no extras")
+            out.append(Finding(
+                "owl-props-spread", module, rel, lineno,
+                f"`...{name}.props` is `...undefined` at the target: {name} declares an "
+                f"instance `props = useProps(...)`, so this component keeps only its own "
+                f"extras and this.props.record / name / readonly are undefined. "
+                f"Successor: {successor}.",
             ))
     return out
 
@@ -3163,6 +3242,7 @@ def check_fa_icons(repo: str, module: str, target: Target) -> list[Finding]:
 
 
 OWL_CUSTOM_REF_RE = re.compile(r"""\bt-custom-ref=["']([^"']+)["']""")
+OWL_CUSTOM_MODEL_RE = re.compile(r"""\bt-custom-model(\.[\w.]+)?=["']([^"']+)["']""")
 
 
 def _target_custom_ref_gone(target: Target) -> bool:
@@ -3173,29 +3253,52 @@ def _target_custom_ref_gone(target: Target) -> bool:
     return "custom-ref" not in compat and "createRefSignal" not in compat
 
 
+def _target_custom_model_gone(target: Target) -> bool:
+    """20.0 compat also dropped the t-custom-model directive (core 42 files -> t-model)."""
+    compat = target.odoo.show("addons/web/static/src/owl2/owl3_compatibility_layer.js")
+    if compat is None:
+        return False
+    return "createModelSignal" not in compat
+
+
 def check_owl_refs(repo: str, module: str, target: Target) -> list[Finding]:
-    """`t-custom-ref` in our OWL templates on a target whose compat dropped it.
+    """`t-custom-ref` / `t-custom-model` in our OWL templates on a target whose compat
+    dropped them.
 
     The JS half (useRef / useChildRef / useForwardRefToParent / onRendered /
     useChildSubEnv) is js-symbol with JS_SYMBOL_HINTS; this is the template half.
     """
-    if not _target_custom_ref_gone(target):
+    ref_gone = _target_custom_ref_gone(target)
+    model_gone = _target_custom_model_gone(target)
+    if not ref_gone and not model_gone:
         return []
     out: list[Finding] = []
     for full, rel in walk(repo, module, ".xml", ".js"):
         rel_posix = rel.replace(os.sep, "/")
         if "/static/lib/" not in rel_posix and "/static/" in rel_posix:
             for lineno, line in enumerate(read(full).splitlines(), 1):
-                for name in OWL_CUSTOM_REF_RE.findall(line):
-                    field = name if re.fullmatch(r"[A-Za-z_$][\w$]*", name) else (
-                        re.sub(r"[^A-Za-z0-9]+(.)", lambda m: m.group(1).upper(), name))
-                    out.append(Finding(
-                        "owl-ref", module, rel, lineno,
-                        f't-custom-ref="{name}": the compat directive is gone at the '
-                        f"target (core 397 files -> 0). Successor: class field "
-                        f"`{field} = signal.ref()` (signal from @odoo/owl) and "
-                        f't-ref="this.{field}"; read `.el` as before.',
-                    ))
+                if ref_gone:
+                    for name in OWL_CUSTOM_REF_RE.findall(line):
+                        field = name if re.fullmatch(r"[A-Za-z_$][\w$]*", name) else (
+                            re.sub(r"[^A-Za-z0-9]+(.)", lambda m: m.group(1).upper(), name))
+                        out.append(Finding(
+                            "owl-ref", module, rel, lineno,
+                            f't-custom-ref="{name}": the compat directive is gone at the '
+                            f"target (core 397 files -> 0). Successor: class field "
+                            f"`{field} = signal.ref()` (signal from @odoo/owl) and "
+                            f't-ref="this.{field}"; read `.el` as before.',
+                        ))
+                if model_gone:
+                    for mods, expr in OWL_CUSTOM_MODEL_RE.findall(line):
+                        proxied = ".proxy" if re.search(r"\.\w+\.\w+", expr) else ""
+                        out.append(Finding(
+                            "owl-ref", module, rel, lineno,
+                            f't-custom-model{mods}="{expr}": the compat directive is gone at '
+                            f"the target (core 42 files -> native t-model). Successor: "
+                            f't-model{proxied}{mods}="{expr}" — `.proxy` when the expression '
+                            f"is a property of a proxy() object (core autocomplete.xml: "
+                            f't-model.proxy="this.state.value"), plain t-model for a signal.',
+                        ))
     return out
 
 
@@ -3616,7 +3719,7 @@ def main() -> int:
                                    "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
                                    "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc,"
                                    "data-base64,fa-icon,owl-ref,ctrl-hook,py-import,"
-                                   "owl-static-props,env-removed)")
+                                   "owl-static-props,env-removed,owl-props-spread)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -3645,6 +3748,7 @@ def main() -> int:
         "access-grant", "access-op", "field-lit",
         "manifest-version", "calendar-attr", "qweb-tesc", "data-base64",
         "fa-icon", "owl-ref", "ctrl-hook", "py-import", "owl-static-props", "env-removed",
+        "owl-props-spread",
     }
 
     if not args.quiet:
@@ -3667,7 +3771,8 @@ def main() -> int:
         fs: list[Finding] = []
         if want & {"dead-hook", "stale-override"}:
             fs += check_dead_hooks(args.repo, module, target, repo_models, base)
-        if want & {"js-import", "js-symbol", "owl-hook", "patch-target", "patch-shadow"}:
+        if want & {"js-import", "js-symbol", "owl-hook", "patch-target", "patch-shadow",
+                   "owl-props-spread"}:
             fs += check_js(args.repo, module, target, own)
         if want & {"owl-xpath", "owl-tref", "owl-this"}:
             fs += check_owl_templates(args.repo, module, target)
@@ -3721,7 +3826,7 @@ def main() -> int:
         for f in findings:
             by_kind[f.kind].append(f)
         for kind in ("dead-hook", "ctrl-hook", "py-import", "js-import", "js-symbol", "owl-ref",
-                     "owl-static-props", "env-removed", "owl-xpath", "owl-tref",
+                     "owl-static-props", "env-removed", "owl-props-spread", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
                      "view-anchor", "qweb-tcall", "qweb-tesc", "data-base64", "calendar-attr", "security-model",
                      "access-or", "access-grant", "access-op", "field-lit", "fa-icon",

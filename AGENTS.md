@@ -1337,8 +1337,8 @@ Tests and warning gates do not catch these. Run `tools/check_migrate_v20.py` and
 Twelve source-confirmed changes between the tested saas-19.4 pins and released `20.0` (F1–F10
 from the tree diff, F11 from the first matrix, F12–F13 from the first 20.0 review DB). Four are
 program-wide. Run the checker with `--odoo-ref origin/20.0 --odoo-base-ref <saas pin>`: kinds
-`fa-icon`, `owl-ref`, `ctrl-hook`, `py-import`, `owl-static-props`, `env-removed` exist for
-exactly these and stay quiet on a saas-19.4 target. A clean checker is not the gate for a review
+`fa-icon`, `owl-ref`, `ctrl-hook`, `py-import`, `owl-static-props`, `env-removed`,
+`owl-props-spread` exist for exactly these and stay quiet on a saas-19.4 target. A clean checker is not the gate for a review
 URL: open every group form in a browser first (F12 and F13 both passed the checker and killed
 every form view).
 
@@ -1451,6 +1451,19 @@ useChildSubEnv({ inDialog: true });                  useSubEnv({ inDialog: true 
 `onRendered` has no drop-in; core rewrote its four sites to `onMounted` / `useEffect`
 (`dropdown_popover.js`). A hyphenated `t-custom-ref="start-date"` needs a JS identifier
 (`startDate`). Kinds: `owl-ref` (template half), `js-symbol` (JS half, with hints).
+
+The same compat diff also dropped the `t-custom-model` directive (`createModelSignal` glue; core
+42 files → native `t-model`). `t-custom-model="this.state.selectedOption"` becomes
+`t-model.proxy="this.state.selectedOption"` when the expression is a property of a `proxy()`
+object (core `autocomplete.xml`), plain `t-model="this.value"` for a signal
+(`autoresize_input.xml`). One site in `tools` (`email_suite` scheduled-date radio). Kind `owl-ref`.
+
+What the compat **still** restores at 20.0, verified on the same diff (do not rewrite):
+`owl.useSubEnv`, `owl.useEnv`, `owl.onWillRender`, `owl.useComponent`, `owl.useLayoutEffect`,
+`owl.mount`, `owl.App`, `t-custom-portal`; `this.__owl__` is native OWL 3 (`ComponentNode` with
+`.parent`, `.component`, `.remove()` — `mail` `call_dropdown.js:64` uses it); OWL itself is
+`3.0.0-alpha.49` on both pins with an identical export list; all 10 `useService(...)` names and
+the `env.services.orm / action / website` reads in `tools` + `system` are registered at 20.0.
 
 ### F3. `@web/webclient/actions/action_service` → `action_plugin`
 
@@ -1576,6 +1589,16 @@ export class ContactInfoField extends X2ManyField {}   // inherits props = usePr
 `props = props(schema)` (saas-era instance form) still works at 20.0 (core keeps one:
 `property_selection.js:9`); do not rewrite it, but write `useProps` for new code. Kind
 `owl-static-props` (91 findings on `tools-20_port`; `system` 0).
+
+The general form of the saas-era `...CharField.props` lesson follows from this: at 20.0 **no**
+core component has a static `props`, so every `{ ...CoreClass.props, extra }` is
+`{ ...undefined, extra }`, and OWL 3 `makeProps(schema)` defines a getter **only per schema key**
+(`owl.js` `makeProps` → `defineProps(Object.keys(type))`). The component keeps its extras and
+loses `record` / `name` / `readonly` — silently, no throw. Spread the exported schema instead:
+`...many2ManyTagsFieldProps`, `...many2XAutocompleteProps`, `...htmlFieldProps`
+(`@html_editor/fields/html_field`); `AceField` has an inline schema — copy its keys or subclass
+without redeclaring. Kind `owl-props-spread` (5 sites on `tools-20_port`: `business_appointment`,
+`cloud_base`, `knowsystem` ×3; quiet on the saas pin, where those four classes were still static).
 
 ### F13. `env.isSmall` and `env.debug` throw (program-wide)
 
@@ -3974,6 +3997,16 @@ without evidence does not belong in this rule.
   alert domain matched `ODS-900` while the loader put core `product_order_01`
   (`FURN_9999`) on S00001, so the sale-order alert never fired on any serie
   (`system` `odootools_demo/models/demo_notes_alerts.py`).
+- *(2026-09-29, OWL sweep after the 20_2 review)* Diffed the whole compat layer, the
+  OWL export list, `@web/owl2/utils`, `@web/core/utils/hooks`, every `useService` /
+  `env.services.*` / `env.*` read and every `@odoo/owl` import across `tools-20_port`
+  + `system-20.0` against 20.0. Two more breaks: the compat `t-custom-model`
+  directive is gone (F2 addendum, 1 site) and every `...CoreClass.props` spread is
+  `...undefined` because `makeProps` only defines schema keys (F12 addendum, 5
+  sites, silent). Kind `owl-ref` now covers `t-custom-model`; new kind
+  `owl-props-spread` resolves the spread class through the file's imports and reads
+  the target source for `static props`. Everything else our JS touches is still
+  restored by the 20.0 compat or native OWL 3 (list under F2).
 
 ## 30-command-vocabulary
 
