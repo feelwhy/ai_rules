@@ -1435,7 +1435,8 @@ setup() { this.root = useRef("root"); }             // template: t-custom-ref="r
 // AFTER (20.0, core action_swiper.js:43 / .xml:5)
 import { signal } from "@odoo/owl";
 root = signal.ref();                                 // template: t-ref="this.root"
-// `this.root.el` still reads the element.
+// A signal ref is read by CALLING it: `this.root()` is the element (core kanban_controller:
+// `this.rootRef().querySelector(...)`). `this.root.el` is undefined and throws on first use.
 
 // BEFORE — forwarded ref
 import { useForwardRefToParent } from "@web/core/utils/hooks";
@@ -4007,6 +4008,24 @@ without evidence does not belong in this rule.
   `owl-props-spread` resolves the spread class through the file's imports and reads
   the target source for `static props`. Everything else our JS touches is still
   restored by the 20.0 compat or native OWL 3 (list under F2).
+- *(2026-09-30, `20_4` Fx.1 browser first-click)* The checker was clean after the `owl-ref` fix and
+  the login dialog still died on its first mount: `signal.ref()` is a plain signal
+  (`owl.js` `signalRef` = `buildSignal(null, atom => atom.value)`), so the element is read
+  by **calling** it — `this.modalRef()`, `this.treeRef()` (core `kanban_controller.js`
+  `this.rootRef().querySelector(...)`) — and `.el` is `undefined`. F2 and the `owl-ref`
+  hint said "read `.el` as before"; both are corrected. A forwarded dialog ref is
+  `this.modalRef = signal.ref()` and `<Dialog modalRef="this.modalRef"/>` (core
+  `form_view_dialog.js`), not `useChildRef`. Three template breaks that only a fresh
+  install shows (the checker cannot see them): `project.view_task_card` at 20.0 keeps the
+  name under `main/div.o_kanban_project_header/.../field[@name='name']`, so
+  `//main/field[@name='name']` fails; `project.portal_tasks_list` has no task id column
+  any more, so `//td/span[@t-out='task.id']` fails; a `t-call` attribute is the way to pass
+  `additional_title` to `portal.portal_layout`. `python-api` flags
+  `base64.b64encode(os.urandom(16)).decode()` although `.decode()` already makes a `str`
+  (false positive, `odoo_password_manager/models/password_bundle.py:438`). Icon subset:
+  Material Symbols ship as a **subset** of the names in
+  `addons/web/tooling/icons/icons_wishlist.txt` (482); the font carries only those ligatures,
+  so check a new name there before using it.
 
 ## 30-command-vocabulary
 

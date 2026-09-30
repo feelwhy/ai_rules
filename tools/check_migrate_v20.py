@@ -3286,7 +3286,8 @@ def check_owl_refs(repo: str, module: str, target: Target) -> list[Finding]:
                             f't-custom-ref="{name}": the compat directive is gone at the '
                             f"target (core 397 files -> 0). Successor: class field "
                             f"`{field} = signal.ref()` (signal from @odoo/owl) and "
-                            f't-ref="this.{field}"; read `.el` as before.',
+                            f't-ref="this.{field}"; read the element by calling the '
+                            f"signal (`this.{field}()`): a signal ref has no `.el`.",
                         ))
                 if model_gone:
                     for mods, expr in OWL_CUSTOM_MODEL_RE.findall(line):
