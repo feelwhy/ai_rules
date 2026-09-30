@@ -142,6 +142,19 @@ Rename table derived from core's own diff (5643 unambiguous hunk pairs across `o
 | `fa-plane` | `travel` 17/17 | | `fa-calendar-times-o` | `event_busy` | | `fa-minus` | `remove` 16/16 |
 | `fa-list-alt` | `list_alt` | | `fa-arrow-left` | `arrow_back` | | `fa-language` | `translate` |
 
+**A hyphenated `icon="…"` is a leftover too, not only `fa-…`.** `ViewButton.iconFromString`
+prints the attribute as `data-icon=<string>`, and every Material Symbols name is snake_case
+without a hyphen. The saas-era `icon="oi-arrow-right"` therefore no longer draws an arrow: on
+`20_4` the two Task Numbering links in Settings showed `--` in front of the label. Core's own
+settings pages write `icon="arrow_forward"` (`class="oe_link"` or `btn-link`). Also
+`oi-arrow-left` → `arrow_back`, `oi-arrow-up` → `arrow_upward`, `oi-arrow-down` →
+`arrow_downward`, `oi-chevron-right` / `-left` → `chevron_right` / `chevron_left`,
+`oi-chevron-up` / `-down` → `expand_less` / `expand_more`. Kind `icon-name` (one finding per
+file, `oi-arrow-right` maps to `arrow_forward`); a `fa-…` value stays with `fa-icon`. On
+`tools-20_port` it finds 6 files: `task_numbers` (fixed on `20_4`), `business_appointment`,
+`cloud_base`, `email_suite`, `mail_manual_routing`, `odoo_email_from`. Fix them in their own
+group's `Fx.1`, and look at the Settings page in the browser: a wrong name shows as text.
+
 Core never migrated these (pick by hand from the Material Symbols set; social brands use the
 `oi_*` glyphs of `odoo_ui_icons`): `fa-telegram`, `fa-envelope-square`, `fa-paste`,
 `fa-superpowers`, `fa-dedent`, `fa-indent`, `fa-slack`, `fa-arrows-v`, `fa-arrows-h`,
@@ -2767,3 +2780,10 @@ without evidence does not belong in this rule.
   `OSError`, the demo loader only logged a warning, and every role user kept a generated letter
   avatar. `odootools_demo` now reads the photo file from `hr/data/hr_demo.xml` by employee
   name, so it follows the serie. Do not hard-code a core static file name in demo code.
+- *(2026-09-30, `20_4` Fx.2 owner review)* The owner saw `-- Configure sequence rules` and
+  `-- Update all tasks' numbers` in Settings > Project > Task Numbering, where core shows
+  `→ Attributes`. `task_numbers` used `icon="oi-arrow-right"`; core 20.0 has no `icon="oi-`
+  anywhere and two `icon="arrow_forward"` on settings pages. New checker kind `icon-name`
+  and the F1 paragraph above. A clean `fa-icon` run had not caught it: the name has no
+  `fa-`. Looking at the page found it, so a group's `Fx.1` browser pass includes its
+  Settings section.

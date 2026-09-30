@@ -82,6 +82,10 @@ phase-1 analysis proved are findable statically:
   manifest-version  a serie-prefixed manifest version while --odoo-ref is a saas-* branch
   fa-icon           (20.0) Font Awesome markup in a file while the target has no
                     web.fontawesome bundle; one finding per file with the icon names
+  icon-name         (20.0) a view `icon="oi-arrow-right"` (any hyphenated non-fa name): the button
+                    renders data-icon=<string> only, and Material names have no hyphen, so the
+                    link shows literal text ("--") instead of the arrow (successor
+                    icon="arrow_forward")
   owl-ref           (20.0) t-custom-ref / t-custom-model in our OWL template while the target
                     compat no longer registers the directive (successor x = signal.ref() +
                     t-ref="this.x"; native t-model / t-model.proxy)
@@ -3241,6 +3245,58 @@ def check_fa_icons(repo: str, module: str, target: Target) -> list[Finding]:
     return out
 
 
+ICON_ATTR_RE = re.compile(r"""\bicon=["']([^"'{}$%]+)["']""")
+# Legacy hyphenated icon names -> Material Symbols name (rule 22, F1). Names not listed:
+# pick from web/tooling/icons/icons_wishlist.txt (the font is a subset).
+ICON_NAME_SUCCESSOR = {
+    "oi-arrow-right": "arrow_forward", "oi-arrow-left": "arrow_back",
+    "oi-arrow-up": "arrow_upward", "oi-arrow-down": "arrow_downward",
+    "oi-chevron-right": "chevron_right", "oi-chevron-left": "chevron_left",
+    "oi-chevron-up": "expand_less", "oi-chevron-down": "expand_more",
+}
+
+
+def check_icon_names(repo: str, module: str, target: Target) -> list[Finding]:
+    """`icon="oi-…"` on a view button at a target that only renders Material Symbols.
+
+    `ViewButton.iconFromString` has one branch left: `class="o_button_icon oi"` +
+    `data-icon=<string>`. 19.0 / saas-19.4 accepted `oi-arrow-right`; 20.0 prints the string, and
+    an unknown ligature shows as literal text, which is how the settings links showed "--" instead
+    of "→". Every Material name is snake_case without a hyphen, so any hyphenated value is a
+    leftover. `fa-…` names belong to `fa-icon`. One finding per file.
+    """
+    if not _target_fontawesome_gone(target):
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/lib/" in rel_posix or "/migrations/" in rel_posix or "/static/description/" in rel_posix:
+            continue
+        first_line = 0
+        names: dict[str, int] = defaultdict(int)
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            if line.lstrip().startswith("<!--"):
+                continue
+            for name in ICON_ATTR_RE.findall(line):
+                if "-" not in name or "fa-" in name or " " in name.strip():
+                    continue
+                first_line = first_line or lineno
+                names[name] += 1
+        if not names:
+            continue
+        listed = ", ".join(
+            "%s -> %s" % (name, ICON_NAME_SUCCESSOR.get(name, "<material>")) for name in sorted(names)
+        )
+        out.append(Finding(
+            "icon-name", module, rel, first_line,
+            f"{sum(names.values())} button icon(s) with a hyphenated name ({listed}): 20.0 prints the "
+            f'string as literal text, so the link shows "--" instead of the arrow. Successor: '
+            f'icon="arrow_forward" (core settings pages) or another Material Symbols name that is in '
+            f"web/tooling/icons/icons_wishlist.txt.",
+        ))
+    return out
+
+
 OWL_CUSTOM_REF_RE = re.compile(r"""\bt-custom-ref=["']([^"']+)["']""")
 OWL_CUSTOM_MODEL_RE = re.compile(r"""\bt-custom-model(\.[\w.]+)?=["']([^"']+)["']""")
 
@@ -3720,7 +3776,7 @@ def main() -> int:
                                    "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
                                    "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc,"
                                    "data-base64,fa-icon,owl-ref,ctrl-hook,py-import,"
-                                   "owl-static-props,env-removed,owl-props-spread)")
+                                   "owl-static-props,env-removed,owl-props-spread,icon-name)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -3749,7 +3805,7 @@ def main() -> int:
         "access-grant", "access-op", "field-lit",
         "manifest-version", "calendar-attr", "qweb-tesc", "data-base64",
         "fa-icon", "owl-ref", "ctrl-hook", "py-import", "owl-static-props", "env-removed",
-        "owl-props-spread",
+        "owl-props-spread", "icon-name",
     }
 
     if not args.quiet:
@@ -3806,6 +3862,8 @@ def main() -> int:
             fs += check_qweb_tesc(args.repo, module)
         if "fa-icon" in want:
             fs += check_fa_icons(args.repo, module, target)
+        if "icon-name" in want:
+            fs += check_icon_names(args.repo, module, target)
         if "owl-ref" in want:
             fs += check_owl_refs(args.repo, module, target)
         if "ctrl-hook" in want:
@@ -3830,7 +3888,7 @@ def main() -> int:
                      "owl-static-props", "env-removed", "owl-props-spread", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
                      "view-anchor", "qweb-tcall", "qweb-tesc", "data-base64", "calendar-attr", "security-model",
-                     "access-or", "access-grant", "access-op", "field-lit", "fa-icon",
+                     "access-or", "access-grant", "access-op", "field-lit", "fa-icon", "icon-name",
                      "manifest-version", "stale-override"):
             group = by_kind.get(kind)
             if not group:
