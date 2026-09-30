@@ -4026,6 +4026,12 @@ without evidence does not belong in this rule.
   Material Symbols ship as a **subset** of the names in
   `addons/web/tooling/icons/icons_wishlist.txt` (482); the font carries only those ligatures,
   so check a new name there before using it.
+- *(2026-09-30, `20_4` Fx.2 review)* Core demo photos are `.webp` at 20.0
+  (`hr/static/img/employee_*-image.webp`, `base/static/img/user_light-image.webp`); the `.jpg`
+  names are gone. A hard-coded `file_open("hr/static/img/employee_mit-image.jpg")` raised
+  `OSError`, the demo loader only logged a warning, and every role user kept a generated letter
+  avatar. `odootools_demo` now reads the photo file from `hr/data/hr_demo.xml` by employee
+  name, so it follows the serie. Do not hard-code a core static file name in demo code.
 
 ## 30-command-vocabulary
 
