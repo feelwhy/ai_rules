@@ -101,6 +101,9 @@ phase-1 analysis proved are findable statically:
                     target compat throws at construction (successor `props = useProps({...})`)
   env-removed       (20.0) `env.isSmall` / `env.debug` read while the target env Proxy throws
                     for that key (successor uiService.isSmall / DebugModePlugin)
+  patch-props       (20.0) `patch(X.prototype)` reading this.props while X and its ancestors
+                    declare no props at the target (mail Chatter moved to prop signals:
+                    this.threadId() / this.threadModel())
 
 Design notes that matter (learned the hard way in phase 1):
 
@@ -1354,6 +1357,7 @@ def check_js(repo: str, module: str, target: Target, own_modules: set[str]) -> l
         out += check_patch_shadow(module, rel, src, target, own_modules)
         out += check_js_symbols(module, rel, src, target, own_modules)
         out += check_props_spread(module, rel, src, target, own_modules)
+        out += check_patch_props(module, rel, src, target, own_modules)
         out += check_gone_js_paths(module, rel, src)
         out += check_form_controller_template(module, rel, src)
         out += check_builder_options_template(module, rel, src)
@@ -1813,6 +1817,71 @@ def check_props_spread(module: str, rel: str, src: str, target: Target,
                 f"extras and this.props.record / name / readonly are undefined. "
                 f"Successor: {successor}.",
             ))
+    return out
+
+
+PATCH_THIS_PROPS_RE = re.compile(r"\bthis\.props\b")
+CLASS_DECLARES_PROPS_RE = re.compile(r"(?:^|[\s;{])props\s*=(?!=)|\bthis\.props\s*=(?!=)", re.M)
+
+
+def _class_declares_props(target: Target, spec: str, symbol: str) -> bool | None:
+    """True when `symbol` (or an ancestor) assigns `props` / `this.props`; None when not found."""
+    seen: set[tuple[str, str]] = set()
+    pending = [(spec, symbol)]
+    located = False
+    while pending:
+        cur_spec, cur_symbol = pending.pop()
+        if (cur_spec, cur_symbol) in seen:
+            continue
+        seen.add((cur_spec, cur_symbol))
+        src = target.js_source(cur_spec)
+        if not src:
+            continue
+        body, parent = js_class_body(js_blank_literals(src), cur_symbol)
+        if body is None:
+            continue
+        located = True
+        if CLASS_DECLARES_PROPS_RE.search(body):
+            return True
+        if parent:
+            pending.append((js_import_bindings(src).get(parent, cur_spec), parent))
+    return False if located else None
+
+
+def check_patch_props(module: str, rel: str, src: str, target: Target,
+                      own_modules: set[str]) -> list[Finding]:
+    """`patch(X.prototype, {...})` reading `this.props` while X has no props at the target.
+
+    OWL 3 sets `this.props` only through `props = useProps(...)`; a core class that moved
+    its props into prop signals (mail `Chatter`: `this.threadId = propComputed(...)`) has
+    no `this.props` at all, so the patch reads `undefined.x` and every view holding the
+    component dies (20_14 Fx.1, cloud_base chatter patch).
+    """
+    out: list[Finding] = []
+    targets = js_import_targets(src)
+    blanked = js_blank_literals(src)
+    for m in JS_PROTO_PATCH_RE.finditer(blanked):
+        sym = m.group(1)
+        spec, exported = targets.get(sym, (None, None))
+        if not spec or spec.lstrip("@").split("/")[0] in own_modules:
+            continue
+        brace = blanked.find("{", m.end() - 1)
+        body = js_block_at(blanked, brace) if brace != -1 else None
+        if body is None:
+            continue
+        hit = PATCH_THIS_PROPS_RE.search(body)
+        if not hit or _class_declares_props(target, spec, exported) is not False:
+            continue
+        lineno = blanked.count("\n", 0, brace + 1) + 1 + body.count("\n", 0, hit.start())
+        out.append(Finding(
+            "patch-props", module, rel, lineno,
+            f"patch({sym}.prototype) reads this.props, but {exported} ({spec}) and its "
+            f"ancestors declare no props at the target: OWL 3 sets this.props only through "
+            f"`props = useProps(...)`, so this is undefined.x on every render. Successor: "
+            f"the class's own prop accessors (mail Chatter: this.threadId() / "
+            f"this.threadModel()), or a `useProps({{...}})` of the keys you need under "
+            f"another name in setup (core web chatter: this.webChatterProps).",
+        ))
     return out
 
 
@@ -2459,6 +2528,48 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                         "python-api", module, rel, lineno,
                         f"from odoo.http import {name}: saas-19.4 http is a package and "
                         f"does not re-export this name. {HTTP_PACKAGE_MOVED[name]}",
+                    ))
+    return out
+
+
+FILE_STORE_LEFTOVERS = (
+    (re.compile(r"def\s+_file_read\s*\(\s*self\s*,"),
+     "_file_read(self, fname, ...) override"),
+    (re.compile(r"\._file_read\s*\(\s*[^)\s]"),
+     "_file_read(<fname>) call"),
+    (re.compile(r"def\s+_file_write\s*\(\s*self\s*,\s*\w+\s*,\s*checksum\b"),
+     "_file_write(self, bin_value, checksum) override"),
+    (re.compile(r"\b_get_path\s*\("), "_get_path()"),
+    (re.compile(r"\b_set_attachment_data\s*\("), "_set_attachment_data()"),
+)
+
+
+def check_file_store(repo: str, module: str, target: Target) -> list[Finding]:
+    """ir.attachment file-store leftovers while the target is record-based (rule 22 F6).
+
+    20.0 `_compute_raw` calls `attach._file_read()` with no argument, so an override that
+    still takes `fname` (or a super() call passing it) is a TypeError on every attachment
+    read: the registry dies at install on enterprise (documents recomputes raw).
+    """
+    core = target.odoo.show("odoo/addons/base/models/ir_attachment.py") or ""
+    if not re.search(r"def _file_read\(self\)", core):
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".py"):
+        for lineno, line in enumerate(read(full).splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            for pattern, what in FILE_STORE_LEFTOVERS:
+                if pattern.search(line):
+                    out.append(Finding(
+                        "python-api", module, rel, lineno,
+                        f"{what}: ir.attachment file-store methods are record-based at the "
+                        f"target (_file_read(self) -> BinaryValue, _file_write(self, fname, "
+                        f"bin_value), _file_fname(sha); _get_path / _set_attachment_data "
+                        f"gone). Core _compute_raw calls attach._file_read(), so a leftover "
+                        f"is a TypeError on every attachment read. Successor: read "
+                        f"self.store_fname in a record method; a non-file read (cloud) gets "
+                        f"its own helper called from _compute_raw (20_14 cloud_base).",
                     ))
     return out
 
@@ -3776,7 +3887,7 @@ def main() -> int:
                                    "patch-shadow,view-xmlid,view-anchor,qweb-tcall,security-model,"
                                    "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc,"
                                    "data-base64,fa-icon,owl-ref,ctrl-hook,py-import,"
-                                   "owl-static-props,env-removed,owl-props-spread,icon-name)")
+                                   "owl-static-props,env-removed,owl-props-spread,icon-name,patch-props)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -3805,7 +3916,7 @@ def main() -> int:
         "access-grant", "access-op", "field-lit",
         "manifest-version", "calendar-attr", "qweb-tesc", "data-base64",
         "fa-icon", "owl-ref", "ctrl-hook", "py-import", "owl-static-props", "env-removed",
-        "owl-props-spread", "icon-name",
+        "owl-props-spread", "icon-name", "patch-props",
     }
 
     if not args.quiet:
@@ -3829,12 +3940,13 @@ def main() -> int:
         if want & {"dead-hook", "stale-override"}:
             fs += check_dead_hooks(args.repo, module, target, repo_models, base)
         if want & {"js-import", "js-symbol", "owl-hook", "patch-target", "patch-shadow",
-                   "owl-props-spread"}:
+                   "owl-props-spread", "patch-props"}:
             fs += check_js(args.repo, module, target, own)
         if want & {"owl-xpath", "owl-tref", "owl-this"}:
             fs += check_owl_templates(args.repo, module, target)
         if "python-api" in want:
             fs += check_python_api(args.repo, module)
+            fs += check_file_store(args.repo, module, target)
         if "view-xmlid" in want:
             fs += check_views(args.repo, module, target, own)
             fs += check_gone_xmlids(args.repo, module)
@@ -3885,7 +3997,7 @@ def main() -> int:
         for f in findings:
             by_kind[f.kind].append(f)
         for kind in ("dead-hook", "ctrl-hook", "py-import", "js-import", "js-symbol", "owl-ref",
-                     "owl-static-props", "env-removed", "owl-props-spread", "owl-xpath", "owl-tref",
+                     "owl-static-props", "env-removed", "owl-props-spread", "patch-props", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
                      "view-anchor", "qweb-tcall", "qweb-tesc", "data-base64", "calendar-attr", "security-model",
                      "access-or", "access-grant", "access-op", "field-lit", "fa-icon", "icon-name",

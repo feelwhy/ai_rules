@@ -270,6 +270,12 @@ the base ref and gone at the target).
 
 Core's only caller is `attach._file_read()` in `_compute_raw` (`:382`). An override that still
 takes `fname` (and calls `super()._file_read(fname=…)`) is a `TypeError` on every attachment read.
+On enterprise the registry dies at install (`documents` recomputes `raw` for its demo files).
+A non-file read (cloud_base downloads synced items) is its own record helper called from
+`_compute_raw`; the stored-file branch is `attach._file_read()` and the `db_datas` branch is
+`BinaryBytes(attach.db_datas, filename=attach.name)` as core. `raw` still takes plain `bytes`
+(`fields_binary.py` `convert_to_cache`, raw-only exception). Kind `python-api` (gated on a
+target whose `_file_read` takes only `self`).
 
 ### F7. `HrAttendance.scan_barcode` absorbed the geolocation route
 
@@ -366,6 +372,43 @@ Two related 20.0 facts from the same review, not breaks: `FormRenderer.setup()` 
 `this.state = proxy({})` for its compiler (`isStatusbarStickyPinned`) — a renderer patch must
 `Object.assign(this.state, {...})`, not replace the proxy (two patches replacing it kept only the
 last one's keys); and `owl="1"` on `<t t-name>` is still ignored (21 core templates carry it).
+
+### F14. mail `Chatter` and `AttachmentList` moved to prop signals and one active panel
+
+OWL 3 sets `this.props` only through `props = useProps(...)`. The base `Chatter`
+(`mail/static/src/chatter/web_portal_project/chatter.js`) now reads its props as signals:
+`this.threadId()`, `this.threadModel()`, `this.composer()`, `this.thread()`; the web patch
+keeps its own `this.webChatterProps`. There is **no** `this.props`, so a patch reading
+`this.props.threadId` is `undefined.threadId` and every form with a chatter dies. Kind
+`patch-props` (generic: `patch(X.prototype)` reading `this.props` while X and its ancestors
+declare no props at the target). `onWillUpdateProps(nextProps)` on the patch becomes
+`useOnChange(() => [this.threadModel(), this.threadId()], (model, id) => …, { initialRun: false })`
+(`useOnChange` from `@odoo/owl`).
+
+| saas-19.4 | 20.0 |
+|---|---|
+| `state.isAttachmentBoxOpened` | `state.activePanel === this.CHATTER_PANEL.ATTACHMENT` (shared with search and pinned messages; `CHATTER_PANEL` is not exported, use the instance copy) |
+| `onClickAddAttachments` toggles even when empty | returns early when `attachments.length === 0` |
+| `get attachments()` → `thread.attachments` | `thread.sortedAttachments`; `AttachmentList` gets `attachmentGroups` (`groupAttachments(this.attachments)`) |
+| box `FileUploader` at `o-mail-AttachmentBox/div[hasclass('flex-column')]/FileUploader` | inside `div.o-mail-Chatter-attachmentActions/t[@t-else]`: xpath `//div[hasclass('o-mail-Chatter-attachmentActions')]//FileUploader` |
+| upload handler stays in `uploadHandlers` | the core handler deletes itself in `finally`; a wrapper is re-made on the next `onUploaded` |
+| `AttachmentList.getActions` icon `"fa fa-…"` | bare Material name (`icon: "cloud"`), rendered as `data-icon` |
+
+The old xpath fails at template load, which takes the whole web client down, not just the
+chatter. The `AttachmentList` anchors cloud_base uses (`t-elif="this.canDownload(attachment)"`,
+`a[t-if="!attachment.isImage and attachment.type === 'url'"]`, `img[t-elif="attachment.isImage"]`,
+`Gif[t-if=…]`, `div.o-mail-AttachmentCard-image`, first `div.o_image`) all survive.
+
+`useDateTimePicker` no longer resolves a string `target` (saas `useRef(params.target)`): 20.0
+passes it through as the popover element. Inputs are `inputRefs: [this.startDate, this.endDate]`
+(signal refs); a target is a signal ref or element. A leftover `target: "root"` that pointed at
+nothing on saas (fallback to the inputs' common parent) must be dropped.
+
+Font Awesome class names stored as **data** (a jstree node `icon` computed into a stored field,
+default-folder JSON markers like `"fa fa-file-o"`) are not markup: keep the strings and draw them
+with a small SCSS shim (`.jstree-themeicon.fa-folder::before { content: "folder"; font-family:
+'Material Symbols Outlined' }`), in a bundle both backend and portal trees load. `fa-icon` keeps
+reporting those lines; record them as deliberate.
 
 ### F10. Verified unchanged (do not re-port)
 
@@ -1683,7 +1726,7 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `owl-this` | a `t-inherit` / standalone / `xml\`` OWL template still uses a bare OWL-3 scope name (`state.` / `panelState.` / `env.` / `props.` / `model.`), a bare getter (`t-att-class="panelClass"`, `t-out="title"`), a bare `t-if` / `t-elif` ident (`t-if="projectUser"`), a bare `t-props="viewProps"` / `modalRef="modalRef"`, a bare `#{id}` interpolation, a bare method bind (`update.bind="handleChange"`, `t-on-click="clear"`), a `t-on-*` arrow that calls a method without `this.` (`(event) => _onSearchNavigation(...)`), or a PascalCase child `prop="prop"` (`<TimeTableTable timeTableId="timeTableId"/>` — successor `this.timeTableId`; `20_7` timetable open). Indexes inherit-only `<t t-inherit>` with no `t-name` (`20_15` multilang `state.uniqueId`). Quiet for names introduced by `t-as` / `t-set` in that template (`20_11` forecast foreach aliases; `OMMItem oMenu="oMenu"`) |
 | `qweb-tcall` | inner `t-set` of `breadcrumbs_searchbar` / `object` / `token` / `title` / `size` / `mobileSize` / `service` / `entries` / `card_*` / `_classes` / `no_breadcrumbs` / `additional_title` on a `t-call` — saas-19.4 slot only. `size`/`mobileSize` on a snippet item is `10 - None` (`20_15` KnowSystem palette). Appointments cards miss `card_href` (`20_16`). Also leftover QWeb `website.ba_stepN` (successor `_ba_frontend_text` / `_ba_step_labels` — `20_16` HttpCase stepper stayed English after flush) |
 | `owl-hook` | `useEffect(fn, deps)` imported from `@odoo/owl` — OWL 3 `useEffect` ignores the deps array |
-| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), leftover `_field_to_sql(table,` (saas first arg is a string alias — successor `table.<field>`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`), `"web_icon_data": self.web_icon_data` (saas Binary is `BinaryValue`; jsonrpc `.content.decode()` dies on PNG `0x89`; successor `bool(icon)`), or leftover `base64.b64encode(` into Image/Binary (`TypeError: use BinaryValue instead of bytes` — successor `BinaryBytes(raw)`; `20_16` Gx.5) |
+| `python-api` | a call to a core method that is gone at the target (`get_param` / `set_param` / `Registry.clear_cache` / `Store.get_result`), a leftover `tools.ormcache` (import from `odoo.api`), a leftover `request.website` (use `request.env.website`), a named import that left `odoo.http` (`Stream` / `content_disposition`), a leftover 19.0 `_order_field_to_sql(..., query)` / `_order_to_sql(order, query)` (saas dropped `query`; first arg is `table`), leftover `_field_to_sql(table,` (saas first arg is a string alias — successor `table.<field>`), `safe_eval(get_str(...))` without `or` (stored empty skips the default; successor `get_str(...) or "[]"`), `res_access_*` `compute=lambda` / Field `depends="name"` (iterates characters; successor named `_compute_res_access_<op>` + `@api.depends`), leftover `_notify_thread(..., msg_vals=)` (method exists; kwargs must be in `_get_notify_valid_parameters`; successor write `message.partner_ids` + `notify_skip_followers`), `"web_icon_data": self.web_icon_data` (saas Binary is `BinaryValue`; jsonrpc `.content.decode()` dies on PNG `0x89`; successor `bool(icon)`), or leftover `base64.b64encode(` into Image/Binary (`TypeError: use BinaryValue instead of bytes` — successor `BinaryBytes(raw)`; `20_16` Gx.5), or (20.0) an `ir.attachment` file-store leftover: `_file_read(self, fname)` override or `_file_read(<arg>)` call, `_file_write(self, bin_value, checksum)`, `_get_path(`, `_set_attachment_data(` (F6; gated on a target whose `_file_read` takes only `self`) |
 | `calendar-attr` | a `<calendar date_delay=...>` — RNG and `FIELD_ATTRIBUTE_NAMES` dropped it at saas-19.4; drop the attribute |
 | `qweb-tesc` | `t-esc` / `t-raw` in a non-`static` XML arch — saas forbids those OWL directives; use `t-out` |
 | `data-base64` | `<field type="base64" file="…"/>` in data/demo XML — saas `convert.py` deprecates it and the gate blames our module; successor `type="bytes"`. On `ir.attachment.raw` it is also the wrong payload |
@@ -1701,6 +1744,7 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `owl-ref` | (20.0) `t-custom-ref="x"` in our `static/src` template or inline `xml\`` while the target compat no longer registers the directive. Successor `x = signal.ref()` + `t-ref="this.x"`. The JS half (`useRef`, `useChildRef`, `useForwardRefToParent`, `onRendered`, `useChildSubEnv`) is `js-symbol` with hints |
 | `ctrl-hook` | an override on a class imported from `odoo.addons` (controllers), resolved through our own addons to the core base (`documentation_builder` → `knowsystem_website` → `portal`), whose base method existed at the **base** ref and is gone at the target (`_prepare_home_portal_values`, `scan_barcode_with_geolocation`) — never called / `AttributeError` on `super()` — or whose target signature has parameters the override does not accept (`scan_barcode` `latitude`, `mail_attachment_delete` `access_token_by_attachment_id`). Judged against **our** override, so a saas-era rename the port already adopted stays quiet; `**kwargs` accepts anything |
 | `py-import` | `from odoo.<x> import NAME` where NAME is importable at the **base** ref and not at the target (`PREFETCH_MAX`), or the module itself is gone — an `ImportError` at module load that fails the whole addon. Resolves star re-exports one level (`odoo/tools/__init__.py`, the `safe_eval` package) and stays quiet when neither ref shows the name (resolver limit, not a finding) |
+| `patch-props` | (20.0) `patch(X.prototype, {...})` whose body reads `this.props` while X and its ancestors (resolved through imports at the target) assign neither `props =` nor `this.props =`. OWL 3 sets `this.props` only through `useProps`, so the read is `undefined.x` (mail `Chatter`, F14). Successor: the class's prop signals (`this.threadId()`) or a `useProps` under another name |
 
 `js-import` carries a successor hint for moved files (`MOVED_JS_PATHS`: `action_service` →
 `action_plugin`) and `view-xmlid` for removed views with a known replacement
@@ -2788,3 +2832,17 @@ without evidence does not belong in this rule.
   and the F1 paragraph above. A clean `fa-icon` run had not caught it: the name has no
   `fa-`. Looking at the page found it, so a group's `Fx.1` browser pass includes its
   Settings section.
+- *(2026-10-01, `20_14` Fx.1)* The checker went from 57 findings to 3 deliberate ones and the
+  first fresh install still died twice. `cloud_base` overrode `_file_read(self, fname,
+  attach_cloud_id)` and `_compute_raw` called `_file_read(attach.store_fname)` (F6 had no
+  checker kind): community failed one test, enterprise could not load the registry
+  (`documents` recomputes `raw`). Reading the core sources of every patched class then showed
+  the chatter patch reading `this.props.threadId` on a 20.0 `Chatter` that has no `this.props`,
+  `state.isAttachmentBoxOpened` gone for `activePanel`, and the "Add URL" xpath on a moved
+  `FileUploader` (F14). New kind `patch-props` and an F6 `python-api` check; on the pre-port
+  tree they report exactly those five lines, on `tools-20_port` one harmless
+  `itlibertas_timesheet` read. Also: `form_compiler` turns `oe_button_box` into
+  `.o-form-buttonbox` (a selenium wait on `.oe_button_box` times out), `KanbanRecord`
+  inherits `web.CardRenderer` so `xpath expr="article"`, and a container started without
+  `--http-interface=0.0.0.0` listens on `127.0.0.1` only (the selenium grid gets
+  `ERR_CONNECTION_REFUSED`).
