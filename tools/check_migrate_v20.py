@@ -334,8 +334,10 @@ MANY2ONE_INDEX0_RE = re.compile(r"\.\w+_id\[0\]")
 # OWL 3 compiled templates no longer bind `state` / `props` / `model` as
 # bare names — nor `panelState` / `env` (20_5 Gx.8 KPI + calendar).
 # Core inherit targets write this.state / this.props / this.env.
+# A hyphen before the name is a directive (`t-model.proxy`), not the
+# `model` scope (20_suite scheduled-date radio; core autocomplete).
 OWL_BARE_SCOPE_RE = re.compile(
-    r"(?<![\w.])([A-Za-z_]*[Ss]tate|props|model|env)\."
+    r"(?<![\w.-])([A-Za-z_]*[Ss]tate|props|model|env)\."
 )
 # OWL 3 compile: ctx.foo is not auto-bound. t-props="getX()" dies
 # (getCloudManagerNavigationProps is not a function).

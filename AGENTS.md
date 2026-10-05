@@ -3720,6 +3720,11 @@ without evidence does not belong in this rule.
   `js-symbol` greps `store.emojiLoader`. Retro-scan of `20_2` /
   `20_c` / `20_14` / `20_5` / `20_6` / `20_9` / `20_10` /
   `20_4` / `20_port`: only this file.
+  On 20.0 that successor is stale: `decorateEmojis` takes an Element
+  and calls `element.ownerDocument.evaluate` (`format.js`). Passing
+  `this.body` throws `reading 'evaluate'` (`20_suite` Fx.1 Discuss).
+  Core richBody is `getInnerHtml(decorateEmojis(this.bodyEl.cloneNode(true)))`.
+  `emojiLoader.load()` stays.
 - *(2026-09-18, `20_suite` Gx.8)* Route died
   `ValueError: Those values are not supported when posting or
   notifying: msg_vals`. saas `_notify_thread(self, message,
