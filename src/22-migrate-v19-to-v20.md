@@ -87,6 +87,10 @@ Bundles: `web.material_symbols_outlined` / `_rounded` / `_sharp`
 `class="o_button_icon oi"` + `data-icon=<string>` (`view_button.js:24-30`), so `icon="fa-check"`
 renders the literal ligature name and `class="fa fa-check"` renders an empty element. No compat.
 
+`ir.actions.report` no longer has `report_file`. A `<field name="report_file">` on a report
+action fails install (`Invalid field 'report_file'`). Drop the field; `report_name` stays.
+Observed on the 20_5 reminder PDF and the 20_7 work-schedule report. Checker kind `field-lit`.
+
 ```xml
 <!-- BEFORE -->
 <i class="fa fa-lock"/>                     <button icon="fa-pencil-square-o" …/>

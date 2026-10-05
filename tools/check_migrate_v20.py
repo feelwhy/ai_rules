@@ -11,7 +11,7 @@ phase-1 analysis proved are findable statically:
                or a loadJS/loadCSS URL deleted at the target
                (/web/static/lib/jquery/jquery.js)
   view-xmlid   an `inherit_id` ref to a core view that no longer exists
-  field-lit         a literal use of a removed field name (`datas`, `product_uom`),
+  field-lit         a literal use of a removed field name (`datas`, `product_uom`, `report_file`),
                     leftover resource_calendar_id.tz, or a tz field on a
                     resource.calendar record (successor resource.mixin.tz)
   access-or         a grouped ir.access with an empty domain next to another
@@ -147,6 +147,8 @@ REMOVED_FIELD_LITERALS = {
     "datas": "ir.attachment.datas removed; use raw (BinaryValue; bytes via .content, not base64). Writes are silently dropped.",
     "product_uom": "stock.move.product_uom renamed uom_id. NOTE: sale.order.line / "
                    "product.supplierinfo legitimately use product_uom_id - check the model.",
+    "report_file": "ir.actions.report.report_file is gone on 20.0. Drop the field; "
+                   "report_name is enough (20_5 reminder PDF, 20_7 work schedule).",
 }
 # saas-19.4 export_data still returns {"datas": matrix} (orm/models.py).
 # That key is not ir.attachment.datas. 20_4 password_key.export_data.
