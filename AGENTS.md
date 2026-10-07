@@ -1340,7 +1340,8 @@ program-wide. Run the checker with `--odoo-ref origin/20.0 --odoo-base-ref <saas
 `fa-icon`, `owl-ref`, `ctrl-hook`, `py-import`, `owl-static-props`, `env-removed`,
 `owl-props-spread` exist for exactly these and stay quiet on a saas-19.4 target. A clean checker is not the gate for a review
 URL: open every group form in a browser first (F12 and F13 both passed the checker and killed
-every form view).
+every form view). Every group's `Fx.1` also retargets its store and live-test links to `20.0`
+(F15, kind `serie-link`).
 
 ### F1. Font Awesome is gone — icons are Material Symbols (program-wide, 53 modules)
 
@@ -1350,6 +1351,10 @@ Bundles: `web.material_symbols_outlined` / `_rounded` / `_sharp`
 (`web/static/src/libs/materialsymbols/`). `ViewButton.iconFromString` has one branch left:
 `class="o_button_icon oi"` + `data-icon=<string>` (`view_button.js:24-30`), so `icon="fa-check"`
 renders the literal ligature name and `class="fa fa-check"` renders an empty element. No compat.
+
+`ir.actions.report` no longer has `report_file`. A `<field name="report_file">` on a report
+action fails install (`Invalid field 'report_file'`). Drop the field; `report_name` stays.
+Observed on the 20_5 reminder PDF and the 20_7 work-schedule report. Checker kind `field-lit`.
 
 ```xml
 <!-- BEFORE -->
@@ -1673,6 +1678,45 @@ default-folder JSON markers like `"fa fa-file-o"`) are not markup: keep the stri
 with a small SCSS shim (`.jstree-themeicon.fa-folder::before { content: "folder"; font-family:
 'Material Symbols Outlined' }`), in a bundle both backend and portal trees load. `fa-icon` keeps
 reporting those lines; record them as deliberate.
+
+### F15. Store and live-test links still name 19.0 (program-wide, every `Fx.1`)
+
+A module copied from 19.0 keeps every hard-coded serie in its links. Two forms:
+
+- Settings pages link optional add-ons as
+  `<a href="https://apps.odoo.com/apps/modules/19.0/google_drive_odoo/">…</a>` (`cloud_base`,
+  `knowsystem`, `business_appointment`, `product_management`, `res_partner_completeness`,
+  `vendor_product_management`, `odoo_password_manager`). A manifest `description` can carry the
+  same link.
+- Every manifest carries `"live_test_url": "…newticket?&url_app_id=<id>&ticket_version=19.0…"`.
+
+On 20.0 the settings page then sends the customer to the 19.0 store page, and the store's Live
+Test asks for a 19.0 demo. Nothing fails: the links still open. The GitHub update rewrites the
+manifest of a module it publishes, so `live_test_url` on `tools 20.0` was right for every app
+already published, and wrong everywhere else, while the views were wrong on every branch.
+
+```xml
+<!-- BEFORE -->
+The tool <a href="https://apps.odoo.com/apps/modules/19.0/google_drive_odoo/">Google Drive Odoo Integration</a> (89 Euros extra) is required.
+<!-- AFTER -->
+The tool <a href="https://apps.odoo.com/apps/modules/20.0/google_drive_odoo/">Google Drive Odoo Integration</a> (89 Euros extra) is required.
+```
+
+```python
+# BEFORE
+"live_test_url": "https://faotools.com/my/tickets/newticket?&url_app_id=11&ticket_version=19.0&url_type_id=3",
+# AFTER
+"live_test_url": "https://faotools.com/my/tickets/newticket?&url_app_id=11&ticket_version=20.0&url_type_id=3",
+```
+
+The `.po` files are not touched: the link text is its own term (`msgid "Google Drive Odoo
+Integration"`), and the URL is never part of a msgid. A module `description` that `Fx.3` exported
+into `i18n/` is the exception: change that msgid in the same job as the manifest.
+`static/description/index.html` is generated store HTML; the GitHub update writes its promoted-app
+links, and an app that is not yet published on 20.0 correctly keeps its 19.0 store link there.
+
+Fix it in `Fx.1`, on the group branch, then merge it like any other `Fx.1` port. Kind
+`serie-link`; it only runs against a released target (`--odoo-ref origin/20.0`).
 
 ### F10. Verified unchanged (do not re-port)
 
@@ -3005,6 +3049,7 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `field-lit` | a literal use of a removed field name (`datas`, `product_uom`), leftover `resource_calendar_id.tz`, leftover `timezone(self.tz)` on a calendar method (`20_16` Gx.5 `_ba_attendance_intervals`), or `<field name="tz">` on a `resource.calendar` record (successor `resource.mixin.tz` — `20_16` Layer-1 demo died `Invalid field 'tz'`) |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
 | `fa-icon` | (20.0) Font Awesome markup (`fa fa-…`, `icon="fa-…"`, bare `fa-…` token) in a `.xml` / `.js` / `.py` file while the target has neither the `web.fontawesome` bundle nor `font-awesome.css`. **One finding per file** with the icon names; `static/lib` excluded. Quiet on a saas-19.4 target |
+| `serie-link` | (released target only: `--odoo-ref origin/20.0`) an `apps.odoo.com/apps/modules/<older>.0/` link or a `ticket_version=<older>.0` live-test URL in a `.xml` / `.py` / `.js` file (views, manifests). Successor: the target serie (F15). `static/description/` and `i18n/` are not scanned. One finding per file. Quiet on a saas-19.4 target |
 | `owl-ref` | (20.0) `t-custom-ref="x"` in our `static/src` template or inline `xml\`` while the target compat no longer registers the directive. Successor `x = signal.ref()` + `t-ref="this.x"`. The JS half (`useRef`, `useChildRef`, `useForwardRefToParent`, `onRendered`, `useChildSubEnv`) is `js-symbol` with hints |
 | `ctrl-hook` | an override on a class imported from `odoo.addons` (controllers), resolved through our own addons to the core base (`documentation_builder` → `knowsystem_website` → `portal`), whose base method existed at the **base** ref and is gone at the target (`_prepare_home_portal_values`, `scan_barcode_with_geolocation`) — never called / `AttributeError` on `super()` — or whose target signature has parameters the override does not accept (`scan_barcode` `latitude`, `mail_attachment_delete` `access_token_by_attachment_id`). Judged against **our** override, so a saas-era rename the port already adopted stays quiet; `**kwargs` accepts anything |
 | `py-import` | `from odoo.<x> import NAME` where NAME is importable at the **base** ref and not at the target (`PREFETCH_MAX`), or the module itself is gone — an `ImportError` at module load that fails the whole addon. Resolves star re-exports one level (`odoo/tools/__init__.py`, the `safe_eval` package) and stays quiet when neither ref shows the name (resolver limit, not a finding) |
@@ -4115,6 +4160,13 @@ without evidence does not belong in this rule.
   inherits `web.CardRenderer` so `xpath expr="article"`, and a container started without
   `--http-interface=0.0.0.0` listens on `127.0.0.1` only (the selenium grid gets
   `ERR_CONNECTION_REFUSED`).
+- *(2026-10-07, owner review after `20_suite` Px.9)* Every 20.0 settings page that offers an
+  add-on still linked `apps.odoo.com/apps/modules/19.0/<tech>/`, and every unpublished manifest
+  still had `ticket_version=19.0` in `live_test_url`. No `Fx.1` had looked at links; the
+  checker had no kind for them. Swept all 21 tools 20 branches (`20.0`, `20_port`, `20_final`,
+  every group branch): 284 links in 212 files, nothing else changed, other chats'
+  uncommitted files left alone. F15 and kind `serie-link`: 98 findings on the pre-fix
+  `20_port`, 0 after, 0 against the saas-19.4 pin.
 
 ## 30-command-vocabulary
 
