@@ -326,6 +326,7 @@ OWL_TINHERIT_OPEN_RE = re.compile(
     re.I | re.S,
 )
 OWL_TINHERIT_RE = re.compile(r'\bt-inherit="([^"]+)"')
+OWL_EXTENSION_MODE_RE = re.compile(r'\bt-inherit-mode="extension"')
 OWL_HASCLASS_RE = re.compile(r"""hasclass\(\s*['"]([^'"]+)['"]\s*\)""")
 # 19.0 PWM login inherited web.FormView.Buttons with contains(@class, 'o_form_button_save').
 # saas moved Save to web.FormView.DialogButtons; FormView.Buttons is only New.
@@ -774,6 +775,38 @@ class Target:
                     if inherit and not name.endswith("#extension"):
                         out[name] = inherit
         return out
+
+    @lru_cache(maxsize=1)
+    def owl_extension_only_names(self) -> frozenset[str]:
+        """`t-name`s the target defines only with t-inherit-mode="extension".
+
+        The asset bundle registers an extension under its parent's name, never
+        its own, so inheriting such a name is never applied (bundle console
+        error "Missing (extension) parent templates", 20.0 assetsbundle.py).
+        """
+        primary: set[str] = set()
+        extension: set[str] = set()
+        for tree in self.trees:
+            seen: set[str] = set()
+            grep_out = tree.grep(r't-name=', "*.xml", raw_paths=True)
+            for line in grep_out.splitlines():
+                parts = line.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                path = parts[1]
+                if "/static/" not in path or path in seen:
+                    continue
+                seen.add(path)
+                src = tree.show(path)
+                if not src:
+                    continue
+                for match in OWL_TNAME_OPEN_RE.finditer(src):
+                    attrs, name = match.group(1), match.group(2)
+                    if OWL_TINHERIT_RE.search(attrs) and OWL_EXTENSION_MODE_RE.search(attrs):
+                        extension.add(name)
+                    else:
+                        primary.add(name)
+        return frozenset(extension - primary)
 
     @lru_cache(maxsize=1)
     def owl_template_class_strings(self) -> dict[str, frozenset[str]]:
@@ -2038,6 +2071,7 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
     parent_class_strs = target.owl_template_class_strings() if target is not None else {}
     parent_dirs = target.owl_template_directives() if target is not None else {}
     inherit_of = target.owl_template_inherit_of() if target is not None else {}
+    extension_only = target.owl_extension_only_names() if target is not None else frozenset()
     out: list[Finding] = []
     for full, rel in walk(repo, module, ".xml"):
         rel_posix = rel.replace(os.sep, "/")
@@ -2079,14 +2113,23 @@ def check_owl_templates(repo: str, module: str, target: Target | None = None) ->
                     f"OWL 3 compile scope is ctx; methods are this.{cm.group(1)}().",
                 ))
             out.extend(_owl_this_extra_findings(src, rel, module, off, body, inherit))
+            if inherit and inherit in extension_only:
+                out.append(Finding(
+                    "owl-xpath", module, rel, src.count("\n", 0, off) + 1,
+                    f"t-inherit=\"{inherit}\" names a core extension, not a template. The "
+                    f"bundle registers extensions under their parent, so this one is never "
+                    f"applied (console: Missing (extension) parent templates). Inherit the "
+                    f"extension's own parent instead (mail.ChatterComposer -> mail.Composer).",
+                ))
             if inherit == "mail.Chatter" and "RecipientsInput" in body:
                 lineno = src.count("\n", 0, off) + body[: body.find("RecipientsInput")].count("\n") + 1
                 out.append(Finding(
                     "owl-xpath", module, rel, lineno,
                     "t-inherit mail.Chatter still xpaths RecipientsInput. "
-                    "saas moved To:/Cc: onto mail.ChatterComposer "
-                    "(chatter/web/composer_patch.xml). Successor: inherit "
-                    "mail.ChatterComposer and patch Composer for the "
+                    "To:/Cc: moved into mail.Composer through the extension "
+                    "mail.ChatterComposer (chatter/web/composer_patch.xml). "
+                    "Successor: inherit mail.Composer (not the extension name) "
+                    "and patch Composer for the "
                     "checkbox handler. additionalRecipients need "
                     "recipient_type ('to'/'cc') or RecipientsInput hides them.",
                 ))
