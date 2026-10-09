@@ -108,6 +108,9 @@ phase-1 analysis proved are findable statically:
   patch-props       (20.0) `patch(X.prototype)` reading this.props while X and its ancestors
                     declare no props at the target (mail Chatter moved to prop signals:
                     this.threadId() / this.threadModel())
+  owl-type-or       `t.or(a, b)` in our JS while the target OWL union iterates one list:
+                    with debug or test mode the component throws `types22 is not iterable`
+                    (successor t.or([a, b]))
 
 Design notes that matter (learned the hard way in phase 1):
 
@@ -3620,6 +3623,50 @@ def check_owl_static_props(repo: str, module: str, target: Target) -> list[Findi
     return out
 
 
+OWL_TYPE_OR_RE = re.compile(r"\b(?:t|types)\.or\(\s*")
+
+
+def _target_union_takes_list(target: Target) -> bool:
+    """OWL 3 `t.or` (types.union) iterates its single argument (owl.js `for (const type of types)`).
+
+    True at saas-19.4 and 20.0 (OWL 3.0.0-alpha.49); 19.0 ships OWL 2 with no `union`.
+    """
+    owl = target.odoo.show("addons/web/static/lib/owl/owl.js")
+    if not owl or "or: union" not in owl:
+        return False
+    start = owl.find("function union(")
+    return start >= 0 and "for (const type of types" in owl[start:start + 400]
+
+
+def check_owl_type_or(repo: str, module: str, target: Target) -> list[Finding]:
+    """`t.or(a, b)` in a props schema: OWL 3 takes one list, `t.or([a, b])`.
+
+    Silent until props are validated (odoo.debug or test mode, web/static/src/env.js:105);
+    then the component throws `types22 is not iterable` while constructing, and the view
+    or dialog holding it shows an error (20_17 scoring form, 20_10 checklists, 20_9 Short
+    URLs dialog). Core writes the list form everywhere (0 non-list calls at 20.0).
+    """
+    if not _target_union_takes_list(target):
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".js"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/lib/" in rel_posix or "/static/" not in rel_posix:
+            continue
+        src = read(full)
+        for m in OWL_TYPE_OR_RE.finditer(src):
+            if src[m.end():m.end() + 1] == "[":
+                continue
+            lineno = src.count("\n", 0, m.start()) + 1
+            out.append(Finding(
+                "owl-type-or", module, rel, lineno,
+                "`t.or(a, b)`: OWL 3 `t.or` takes one list of types. With props validation "
+                "on (debug or test mode) the component throws `types22 is not iterable` at "
+                "construction. Successor: `t.or([a, b])`.",
+            ))
+    return out
+
+
 ENV_REMOVED_KEYS_RE = re.compile(r"const REMOVED_KEYS\s*=\s*\{(.*?)\n\};", re.S)
 ENV_REMOVED_SUCCESSORS = {
     "isSmall": ('`this.uiService.isSmall` after `this.uiService = useService("ui")` in a component '
@@ -3986,7 +4033,7 @@ def main() -> int:
                                    "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc,"
                                    "data-base64,fa-icon,owl-ref,ctrl-hook,py-import,"
                                    "owl-static-props,env-removed,owl-props-spread,icon-name,patch-props,"
-                                   "serie-link)")
+                                   "serie-link,owl-type-or)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -4015,7 +4062,7 @@ def main() -> int:
         "access-grant", "access-op", "field-lit",
         "manifest-version", "calendar-attr", "qweb-tesc", "data-base64",
         "fa-icon", "owl-ref", "ctrl-hook", "py-import", "owl-static-props", "env-removed",
-        "owl-props-spread", "icon-name", "patch-props", "serie-link",
+        "owl-props-spread", "icon-name", "patch-props", "serie-link", "owl-type-or",
     }
 
     if not args.quiet:
@@ -4087,6 +4134,8 @@ def main() -> int:
             fs += check_owl_static_props(args.repo, module, target)
         if "env-removed" in want:
             fs += check_env_removed(args.repo, module, target)
+        if "owl-type-or" in want:
+            fs += check_owl_type_or(args.repo, module, target)
         if kinds:
             fs = [f for f in fs if f.kind in kinds]
         findings += fs
@@ -4098,7 +4147,7 @@ def main() -> int:
         for f in findings:
             by_kind[f.kind].append(f)
         for kind in ("dead-hook", "ctrl-hook", "py-import", "js-import", "js-symbol", "owl-ref",
-                     "owl-static-props", "env-removed", "owl-props-spread", "patch-props", "owl-xpath", "owl-tref",
+                     "owl-static-props", "env-removed", "owl-props-spread", "patch-props", "owl-type-or", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
                      "view-anchor", "qweb-tcall", "qweb-tesc", "data-base64", "calendar-attr", "security-model",
                      "access-or", "access-grant", "access-op", "field-lit", "fa-icon", "icon-name",

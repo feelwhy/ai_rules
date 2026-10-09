@@ -1718,6 +1718,30 @@ links, and an app that is not yet published on 20.0 correctly keeps its 19.0 sto
 Fix it in `Fx.1`, on the group branch, then merge it like any other `Fx.1` port. Kind
 `serie-link`; it only runs against a released target (`--odoo-ref origin/20.0`).
 
+### F16. `t.or` takes one list of types (saas-19.4 and 20.0)
+
+OWL 3 `t.or` is `union(types)` and loops over its single argument
+(`addons/web/static/lib/owl/owl.js:1310-1314`, `for (const type of types22)`, same at the
+saas-19.4 and 20.0 pins). `t.or(t.number(), t.boolean())` passes a validator, not a list.
+Nothing happens until props are validated, which is `dev: odoo.debug || session.test_mode`
+(`web/static/src/env.js:105`). Then the component throws `TypeError: types22 is not iterable`
+while constructing, and the view or dialog holding it shows an error. Without debug mode the
+screen works, so tests, a normal first-click and the shell all stay green. Core writes the list
+form everywhere (119 files at 20.0, 0 calls without a list).
+
+```js
+// BEFORE
+partnerId: t.or(t.number(), t.boolean()),
+// AFTER
+partnerId: t.or([t.number(), t.boolean()]),
+```
+
+Observed 2026-10-09: the Customer and Vendor Scoring tabs (`res_partner_completeness`,
+`20_17`), the four checklist tabs (`20_10`, fixed there but never merged into `20_port`), and
+the Short URLs dialog lines (`short_urls`, published on `20.0`). Kind `owl-type-or`. Open
+group forms in `?debug=assets` during the `Gx.7` / `Fx.1` browser pass, so props validation
+is on.
+
 ### F10. Verified unchanged (do not re-port)
 
 All 31 external manifest deps and 58 inherited core models exist; no removed field is used by
@@ -3054,6 +3078,7 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `ctrl-hook` | an override on a class imported from `odoo.addons` (controllers), resolved through our own addons to the core base (`documentation_builder` → `knowsystem_website` → `portal`), whose base method existed at the **base** ref and is gone at the target (`_prepare_home_portal_values`, `scan_barcode_with_geolocation`) — never called / `AttributeError` on `super()` — or whose target signature has parameters the override does not accept (`scan_barcode` `latitude`, `mail_attachment_delete` `access_token_by_attachment_id`). Judged against **our** override, so a saas-era rename the port already adopted stays quiet; `**kwargs` accepts anything |
 | `py-import` | `from odoo.<x> import NAME` where NAME is importable at the **base** ref and not at the target (`PREFETCH_MAX`), or the module itself is gone — an `ImportError` at module load that fails the whole addon. Resolves star re-exports one level (`odoo/tools/__init__.py`, the `safe_eval` package) and stays quiet when neither ref shows the name (resolver limit, not a finding) |
 | `patch-props` | (20.0) `patch(X.prototype, {...})` whose body reads `this.props` while X and its ancestors (resolved through imports at the target) assign neither `props =` nor `this.props =`. OWL 3 sets `this.props` only through `useProps`, so the read is `undefined.x` (mail `Chatter`, F14). Successor: the class's prop signals (`this.threadId()`) or a `useProps` under another name |
+| `owl-type-or` | `t.or(a, b)` (or `types.or(a, b)`) in our `static/src` JS while the target OWL `union` loops over one list (saas-19.4 and 20.0; quiet on 19.0). With props validation on (debug or test mode) the component throws `types22 is not iterable` at construction (F16). Successor `t.or([a, b])` |
 
 `js-import` carries a successor hint for moved files (`MOVED_JS_PATHS`: `action_service` →
 `action_plugin`) and `view-xmlid` for removed views with a known replacement
@@ -4181,6 +4206,16 @@ without evidence does not belong in this rule.
   (`mail.Composer`); XPaths still see the nodes the core extension adds, because extensions
   of one parent apply in load order. Checker `owl-xpath` flags a `t-inherit` of an
   extension-only target name: 1 finding on the pre-fix `20_port`, 0 on fixed `20.0`.
+- *(2026-10-09, `20_17` B1 review)* Opening the Customer Scoring tab with `?debug=assets`
+  on `fx8_20_17` died with `TypeError: types22 is not iterable` at `validateUnion`
+  (`owl.js:1314`): the scoring form declared `t.or(t.number(), t.boolean())`. Every gate had
+  been green, because props are only validated in debug or test mode. The same call was in
+  the four checklist apps on `20_port` (fixed on `20_10` by `907e3d3c4d0`, never merged) and
+  in the Short URLs dialog on published `20.0`. Fixed on `20_17` `3244595f4da`, `20_port`
+  `0668d96335c` / `1f045c9454b`, `20.0` `ab0652b3c8b`, `20_final` `af8c4e50634`; Short URLs
+  release 20.0.1.0.15. F16 and kind `owl-type-or`: 10 findings on the pre-fix `20_port`, 1 on
+  the pre-fix `20_17`, 0 on every current tip except the frozen `20_9` (3), 0 against a 19.0
+  target. The browser pass needs `?debug=assets` to see this class at all.
 
 ## 30-command-vocabulary
 
