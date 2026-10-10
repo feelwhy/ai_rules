@@ -477,6 +477,45 @@ the Short URLs dialog lines (`short_urls`, published on `20.0`). Kind `owl-type-
 group forms in `?debug=assets` during the `Gx.7` / `Fx.1` browser pass, so props validation
 is on.
 
+### F17. HTML editor and builder: scope-bound `Editor`, forwarded refs, overlay key (20.0)
+
+Found porting the KnowSystem editor (`20_15` Fx.1), which copies mass_mailing. Each was
+checked against `odoo@20.0`:
+
+- `new Editor(config, services)` is gone. The constructor is
+ `constructor(scope, config, services)` (`html_editor/static/src/editor.js:178`), so a
+ two-argument call passes the config as the scope. Call `useEditor(config)`
+ (`editor.js:553`) in `setup()`, as `mass_mailing_iframe.js` does. Checker kind: `js-symbol`.
+- `htmlFieldProps` **is exported again** (`html_editor/fields/html_field.js:61`). A subclass
+ writes `props = useProps({ ...htmlFieldProps, extra })` (`mass_mailing_html_field.js:35`).
+ The saas-19.4 successor `static props = { ...HtmlField.props, extra }` now throws (F12).
+ `AceField` still has no exported schema: copy `...standardFieldProps, mode, lineWrapping`.
+- A ref owned by the parent is passed down as a signal:
+ `iframeRef = useProps.static("iframeRef", t.signal(t.ref()))` in the child, and
+ `iframeRef = signal.ref()` in the parent. This replaces `useForwardRefToParent` /
+ `useChildRef`. `overlayRef` is a plain `signal.ref()` given to
+ `<LocalOverlayContainer localOverlay="this.overlayRef"/>`.
+- The html_builder `Builder` requires a `localOverlayContainerKey` string prop
+ (`html_builder/static/src/builder.js:65`), and a basic editor needs
+ `editor.config.localOverlayContainers = { key, ref }` before `attachTo`. Without the key, the
+ builder never constructs.
+- `Dialog.props.size` no longer exists. Copy the selection
+ (`t.selection(["sm", "md", "lg", "xl", "fs", "fullscreen"])`) as `formViewDialogProps` does.
+ `X.props = {...}` assigned after the class body throws the same way as `static props`
+ (kind `owl-static-props`).
+- Builder icon option selectors move from `span.fa, i.fa` to `span.oi, i.oi`, size actions
+ from `fa-2x` to `oi-2x`, and `:not(.fa)` / `:has(.fa, img)` to `.oi`
+ (`mass_mailing_options.xml:34-37`, `customize_mailing_plugin.js:175-181`). `BuilderButton`
+ takes a bare Material name plus `iconClass` (`icon="'format_bold'" iconClass="'oi-fw'"`).
+- `fa-underline` maps to `format_underlined`. The font subset has no `format_underline`,
+ and core's single use of it draws nothing.
+- Never leave a label inside an icon element (`<i class="oi" data-icon="edit"> Edit</i>`).
+ The glyph comes from `::before { content: attr(data-icon) }` (`web/static/src/webclient/icons.scss:50`),
+ and the label would render in the icon font. Write `<i class="oi" data-icon="edit"/> Edit`.
+- Inlined demo bodies keep their `/mail/font_to_img/<FA codepoint>` images: the legacy
+ route is still served (`mail/controllers/mail.py:284`). The editable `description_arch`
+ must be Material, and the pair is re-captured with the 20.0 editor (`35-knowsystem-demo`).
+
 ### F10. Verified unchanged (do not re-port)
 
 All 31 external manifest deps and 58 inherited core models exist; no removed field is used by

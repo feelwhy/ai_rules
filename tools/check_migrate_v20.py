@@ -285,6 +285,19 @@ REMOVED_PYTHON_CALLS = {
         "'_store_attachment_fields')).",
 }
 
+# Removed at the target only: reported when `path` no longer carries `needle`, so a
+# saas-19.4 run (where the method still exists) stays quiet.
+REMOVED_PYTHON_CALLS_IF_TARGET = {
+    "get_current_website": (
+        "addons/website/models/website.py",
+        "def get_current_website",
+        "website.get_current_website is gone at 20.0. The current website is "
+        "env.website (context website_id, environments.py:306); a test that wants "
+        "the default site uses env.ref('base.default_website') as core does "
+        "(20_15 Fx.1: every website test setUpClass died AttributeError).",
+    ),
+}
+
 # Named imports that left odoo.http when it became a package (saas-19.4).
 # request / Controller / route / Response stay on odoo.http.
 HTTP_PACKAGE_MOVED = {
@@ -1402,7 +1415,7 @@ def check_js(repo: str, module: str, target: Target, own_modules: set[str]) -> l
         out += check_js_symbols(module, rel, src, target, own_modules)
         out += check_props_spread(module, rel, src, target, own_modules)
         out += check_patch_props(module, rel, src, target, own_modules)
-        out += check_gone_js_paths(module, rel, src)
+        out += check_gone_js_paths(module, rel, src, target)
         out += check_form_controller_template(module, rel, src)
         out += check_builder_options_template(module, rel, src)
         out += check_website_leftover_builder_options(module, rel, src)
@@ -1681,7 +1694,39 @@ GONE_XMLIDS = {
 }
 
 
-def check_gone_js_paths(module: str, rel: str, src: str) -> list[Finding]:
+# A GONE_JS_CALLS token that the target brought back. 20.0 html_field.js exports
+# htmlFieldProps again (core mass_mailing spreads it), so the saas-era hint is wrong there.
+GONE_JS_CALLS_UNLESS_TARGET = {
+    "htmlFieldProps": (
+        "addons/html_editor/static/src/fields/html_field.js",
+        "export const htmlFieldProps",
+    ),
+}
+
+
+# A JS call whose signature changed at the target. Reported only when the target file
+# carries the needle (so a saas-19.4 run stays quiet).
+GONE_JS_CALLS_IF_TARGET = {
+    "new Editor(": (
+        "addons/html_editor/static/src/editor.js",
+        "constructor(scope, config, services)",
+        "20.0 Editor is new Editor(scope, config, services); a two-argument call passes "
+        "the config as the scope. Successor: useEditor(config) from @html_editor/editor "
+        "in setup() (mass_mailing_iframe.js), as core does (20_15 KnowSystemIframe).",
+    ),
+}
+
+
+def _gone_js_call_restored(token: str, target: Target | None) -> bool:
+    gate = GONE_JS_CALLS_UNLESS_TARGET.get(token)
+    if not gate or target is None:
+        return False
+    src = target.odoo.show(gate[0])
+    return bool(src and gate[1] in src)
+
+
+def check_gone_js_paths(module: str, rel: str, src: str,
+                        target: Target | None = None) -> list[Finding]:
     out: list[Finding] = []
     for lineno, line in enumerate(src.splitlines(), 1):
         stripped = line.lstrip()
@@ -1691,7 +1736,10 @@ def check_gone_js_paths(module: str, rel: str, src: str) -> list[Finding]:
             if path in line:
                 out.append(Finding("js-import", module, rel, lineno, f"{path} {hint}"))
         for token, hint in GONE_JS_CALLS.items():
-            if token in line:
+            if token in line and not _gone_js_call_restored(token, target):
+                out.append(Finding("js-symbol", module, rel, lineno, f"{token} {hint}"))
+        for token, (path, needle, hint) in GONE_JS_CALLS_IF_TARGET.items():
+            if token in line and target is not None and needle in (target.odoo.show(path) or ""):
                 out.append(Finding("js-symbol", module, rel, lineno, f"{token} {hint}"))
         if MANY2ONE_INDEX0_RE.search(line):
             out.append(Finding(
@@ -2449,9 +2497,15 @@ def check_calendar_attrs(repo: str, module: str) -> list[Finding]:
     return out
 
 
-def check_python_api(repo: str, module: str) -> list[Finding]:
+def check_python_api(repo: str, module: str, target: Target | None = None) -> list[Finding]:
     out: list[Finding] = []
     pats = {name: re.compile(rf"\.{re.escape(name)}\s*\(") for name in REMOVED_PYTHON_CALLS}
+    gone_at_target = {}
+    if target is not None:
+        for name, (path, needle, why) in REMOVED_PYTHON_CALLS_IF_TARGET.items():
+            src_t = target.odoo.show(path)
+            if src_t is not None and needle not in src_t:
+                gone_at_target[name] = (re.compile(rf"\.{re.escape(name)}\s*\("), why)
     for full, rel in walk(repo, module, ".py"):
         src = read(full)
         prev_stripped = ""
@@ -2462,6 +2516,10 @@ def check_python_api(repo: str, module: str) -> list[Finding]:
                 continue
             for name, why in REMOVED_PYTHON_CALLS.items():
                 if pats[name].search(line):
+                    out.append(Finding("python-api", module, rel, lineno,
+                                       f"{name}(): {why}"))
+            for name, (pat, why) in gone_at_target.items():
+                if pat.search(line):
                     out.append(Finding("python-api", module, rel, lineno,
                                        f"{name}(): {why}"))
             if TOOLS_ORMCACHE_RE.search(line):
@@ -3571,7 +3629,9 @@ def check_owl_refs(repo: str, module: str, target: Target) -> list[Finding]:
     return out
 
 
-OWL_STATIC_PROPS_RE = re.compile(r"^\s*static\s+(props|defaultProps)\s*=")
+# `X.props = {...}` after the class body is the same schema: the compat reads
+# this.constructor.props either way (20_15 KnowSystemFormViewDialog).
+OWL_STATIC_PROPS_RE = re.compile(r"^\s*(?:static\s+|[A-Z]\w*\.)(props|defaultProps)\s*=")
 
 
 def _target_static_props_throw(target: Target) -> bool:
@@ -4091,7 +4151,7 @@ def main() -> int:
         if want & {"owl-xpath", "owl-tref", "owl-this"}:
             fs += check_owl_templates(args.repo, module, target)
         if "python-api" in want:
-            fs += check_python_api(args.repo, module)
+            fs += check_python_api(args.repo, module, target)
             fs += check_file_store(args.repo, module, target)
         if "view-xmlid" in want:
             fs += check_views(args.repo, module, target, own)
