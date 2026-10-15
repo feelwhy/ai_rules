@@ -82,10 +82,10 @@ phase-1 analysis proved are findable statically:
   manifest-version  a serie-prefixed manifest version while --odoo-ref is a saas-* branch
   fa-icon           (20.0) Font Awesome markup in a file while the target has no
                     web.fontawesome bundle; one finding per file with the icon names
-  icon-name         (20.0) a view `icon="oi-arrow-right"` (any hyphenated non-fa name): the button
-                    renders data-icon=<string> only, and Material names have no hyphen, so the
-                    link shows literal text ("--") instead of the arrow (successor
-                    icon="arrow_forward")
+  icon-name         (20.0) a hyphenated icon name. icon="oi-arrow-right" is printed as
+                    literal text ("--"). class="oi oi-chevron-left" draws nothing: the glyph
+                    comes only from data-icon (successor <i class="oi" data-icon="chevron_left"/>).
+                    oi-fw / oi-lg / oi-2x are size modifiers and stay
   serie-link        (released target only, e.g. --odoo-ref origin/20.0) an
                     apps.odoo.com/apps/modules/<old>.0/ link or a ticket_version=<old>.0
                     live-test URL in our views, Python or manifests: the settings page sends
@@ -111,6 +111,10 @@ phase-1 analysis proved are findable statically:
   owl-type-or       `t.or(a, b)` in our JS while the target OWL union iterates one list:
                     with debug or test mode the component throws `types22 is not iterable`
                     (successor t.or([a, b]))
+  page-option       a selector on a page_options_hook option that does not match <main>.
+                    Page Options starts at main and only walks ancestors, so `.class`
+                    leaves the panel empty (successor main:has(.class); 19.0 already
+                    wrote that on the builder_options resource)
 
 Design notes that matter (learned the hard way in phase 1):
 
@@ -3469,6 +3473,8 @@ def check_fa_icons(repo: str, module: str, target: Target) -> list[Finding]:
 
 
 ICON_ATTR_RE = re.compile(r"""\bicon=["']([^"'{}$%]+)["']""")
+# class="oi oi-chevron-left": a second hyphen means an old icon name, not oi-fw / oi-lg / oi-2x.
+OI_CLASS_RE = re.compile(r"""\boi-([a-z0-9]+(?:-[a-z0-9]+)+)\b""")
 # Legacy hyphenated icon names -> Material Symbols name (rule 22, F1). Names not listed:
 # pick from web/tooling/icons/icons_wishlist.txt (the font is a subset).
 ICON_NAME_SUCCESSOR = {
@@ -3479,43 +3485,71 @@ ICON_NAME_SUCCESSOR = {
 }
 
 
-def check_icon_names(repo: str, module: str, target: Target) -> list[Finding]:
-    """`icon="oi-…"` on a view button at a target that only renders Material Symbols.
+def _icon_successor(name: str) -> str:
+    if name in ICON_NAME_SUCCESSOR:
+        return ICON_NAME_SUCCESSOR[name]
+    if name.startswith("oi-"):
+        return name[3:].replace("-", "_")
+    return "<material>"
 
-    `ViewButton.iconFromString` has one branch left: `class="o_button_icon oi"` +
-    `data-icon=<string>`. 19.0 / saas-19.4 accepted `oi-arrow-right`; 20.0 prints the string, and
-    an unknown ligature shows as literal text, which is how the settings links showed "--" instead
-    of "→". Every Material name is snake_case without a hyphen, so any hyphenated value is a
-    leftover. `fa-…` names belong to `fa-icon`. One finding per file.
+
+def check_icon_names(repo: str, module: str, target: Target) -> list[Finding]:
+    """Hyphenated icon names at a target that only renders Material Symbols.
+
+    `icon="oi-arrow-right"`: `ViewButton.iconFromString` prints the string as `data-icon`, and an
+    unknown ligature shows as literal text (`--` instead of an arrow). `class="oi oi-chevron-left"`
+    draws nothing: 20.0 takes the glyph from `data-icon` only (`icons.scss` `content: attr(data-icon)`),
+    which is how the KnowSystem article pager buttons stayed blank. A class token with a second
+    hyphen (`oi-chevron-left`) is an old icon name; `oi-fw` / `oi-lg` / `oi-2x` are size modifiers.
+    `fa-…` names belong to `fa-icon`. One finding per file.
     """
     if not _target_fontawesome_gone(target):
         return []
     out: list[Finding] = []
-    for full, rel in walk(repo, module, ".xml"):
+    for full, rel in walk(repo, module, ".xml", ".js"):
         rel_posix = rel.replace(os.sep, "/")
         if "/static/lib/" in rel_posix or "/migrations/" in rel_posix or "/static/description/" in rel_posix:
             continue
         first_line = 0
-        names: dict[str, int] = defaultdict(int)
+        attrs: dict[str, int] = defaultdict(int)
+        classes: dict[str, int] = defaultdict(int)
         for lineno, line in enumerate(read(full).splitlines(), 1):
-            if line.lstrip().startswith("<!--"):
+            stripped = line.lstrip()
+            if stripped.startswith("<!--") or stripped.startswith("//") or stripped.startswith("*"):
                 continue
             for name in ICON_ATTR_RE.findall(line):
                 if "-" not in name or "fa-" in name or " " in name.strip():
                     continue
                 first_line = first_line or lineno
-                names[name] += 1
-        if not names:
+                attrs[name] += 1
+            for suffix in OI_CLASS_RE.findall(line):
+                name = "oi-" + suffix
+                first_line = first_line or lineno
+                classes[name] += 1
+        if not attrs and not classes:
             continue
-        listed = ", ".join(
-            "%s -> %s" % (name, ICON_NAME_SUCCESSOR.get(name, "<material>")) for name in sorted(names)
-        )
+        parts = []
+        if attrs:
+            listed = ", ".join(
+                "%s -> %s" % (name, _icon_successor(name)) for name in sorted(attrs)
+            )
+            parts.append(
+                f"{sum(attrs.values())} button icon(s) ({listed}): 20.0 prints the string as "
+                f'literal text, so the link shows "--" instead of the arrow'
+            )
+        if classes:
+            listed = ", ".join(
+                "%s -> data-icon=\"%s\"" % (name, _icon_successor(name)) for name in sorted(classes)
+            )
+            parts.append(
+                f"{sum(classes.values())} oi class(es) ({listed}): the class draws nothing; "
+                f'the glyph comes only from data-icon'
+            )
         out.append(Finding(
             "icon-name", module, rel, first_line,
-            f"{sum(names.values())} button icon(s) with a hyphenated name ({listed}): 20.0 prints the "
-            f'string as literal text, so the link shows "--" instead of the arrow. Successor: '
-            f'icon="arrow_forward" (core settings pages) or another Material Symbols name that is in '
-            f"web/tooling/icons/icons_wishlist.txt.",
+            "; ".join(parts) + ". Successor: icon=\"arrow_forward\" or "
+            '<i class="oi" data-icon="chevron_left"/>. Size modifiers oi-fw / oi-lg / oi-2x stay. '
+            "Unknown names: web/tooling/icons/icons_wishlist.txt.",
         ))
     return out
 
@@ -3696,6 +3730,92 @@ def _target_union_takes_list(target: Target) -> bool:
         return False
     start = owl.find("function union(")
     return start >= 0 and "for (const type of types" in owl[start:start + 400]
+
+
+PAGE_OPTION_XPATH_RE = re.compile(
+    r"""<xpath\b[^>]*page_options_hook[^>]*>.*?</xpath>""",
+    re.S,
+)
+PAGE_OPTION_SELECTOR_RE = re.compile(r"""\bselector=(['"])(.*?)\1""", re.S)
+
+
+def _target_page_containers_on_main(target: Target) -> bool:
+    """Page Options starts at `<main>` (`getPageContainers` → `querySelector("main")`).
+
+    True on 19.0, saas-19.4, and 20.0. A target without that call stays quiet.
+    """
+    src = target.odoo.show("addons/html_builder/static/src/core/builder_options_plugin.js") or ""
+    return "getPageContainers()" in src and 'querySelector("main")' in src
+
+
+def _split_css_selectors(selector: str) -> list[str]:
+    """Split a CSS selector list on commas that are outside parentheses."""
+    parts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in selector:
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _page_option_selector_ok(selector: str) -> bool:
+    """`main` or `main:has(...)` — the only selectors `getPageContainers` can see."""
+    parts = _split_css_selectors(selector)
+    if not parts:
+        return False
+    for part in parts:
+        if part == "main":
+            continue
+        if part.startswith("main:has(") and part.endswith(")"):
+            continue
+        return False
+    return True
+
+
+def check_page_options(repo: str, module: str, target: Target) -> list[Finding]:
+    """Page-option `selector` must match `<main>`, not an inner block.
+
+    `getPageContainers()` is `computeContainers(editable.querySelector("main"))`.
+    `getClosestElements` uses `element.closest`, so it only walks ancestors. A
+    selector `.appointment_reservation_layout` matches a click on that div and
+    matches nothing in the Page Options list (`20_16` Chose time). 19.0 already
+    wrote `main:has(.class)` on the `builder_options` resource; shortening it
+    when the option moves into the `page_options_hook` inherit empties the panel.
+    """
+    if not _target_page_containers_on_main(target):
+        return []
+    out: list[Finding] = []
+    for full, rel in walk(repo, module, ".xml"):
+        rel_posix = rel.replace(os.sep, "/")
+        if "/static/" not in rel_posix:
+            continue
+        src = read(full)
+        for block in PAGE_OPTION_XPATH_RE.finditer(src):
+            body = block.group(0)
+            for sel in PAGE_OPTION_SELECTOR_RE.finditer(body):
+                value = " ".join(sel.group(2).split())
+                if _page_option_selector_ok(value):
+                    continue
+                lineno = src.count("\n", 0, block.start() + sel.start()) + 1
+                out.append(Finding(
+                    "page-option", module, rel, lineno,
+                    f"`selector=\"{value}\"` does not match `<main>`. Page Options "
+                    f"starts at `main` and only walks ancestors, so this option never "
+                    f"appears in that list. Successor: `main:has(...)` (the string "
+                    f"19.0 used on the builder_options resource).",
+                ))
+    return out
 
 
 def check_owl_type_or(repo: str, module: str, target: Target) -> list[Finding]:
@@ -4093,7 +4213,7 @@ def main() -> int:
                                    "access-or,access-grant,access-op,field-lit,manifest-version,calendar-attr,qweb-tesc,"
                                    "data-base64,fa-icon,owl-ref,ctrl-hook,py-import,"
                                    "owl-static-props,env-removed,owl-props-spread,icon-name,patch-props,"
-                                   "serie-link,owl-type-or)")
+                                   "serie-link,owl-type-or,page-option)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="only print findings")
     args = ap.parse_args()
@@ -4123,6 +4243,7 @@ def main() -> int:
         "manifest-version", "calendar-attr", "qweb-tesc", "data-base64",
         "fa-icon", "owl-ref", "ctrl-hook", "py-import", "owl-static-props", "env-removed",
         "owl-props-spread", "icon-name", "patch-props", "serie-link", "owl-type-or",
+        "page-option",
     }
 
     if not args.quiet:
@@ -4196,6 +4317,8 @@ def main() -> int:
             fs += check_env_removed(args.repo, module, target)
         if "owl-type-or" in want:
             fs += check_owl_type_or(args.repo, module, target)
+        if "page-option" in want:
+            fs += check_page_options(args.repo, module, target)
         if kinds:
             fs = [f for f in fs if f.kind in kinds]
         findings += fs
@@ -4207,7 +4330,7 @@ def main() -> int:
         for f in findings:
             by_kind[f.kind].append(f)
         for kind in ("dead-hook", "ctrl-hook", "py-import", "js-import", "js-symbol", "owl-ref",
-                     "owl-static-props", "env-removed", "owl-props-spread", "patch-props", "owl-type-or", "owl-xpath", "owl-tref",
+                     "owl-static-props", "env-removed", "owl-props-spread", "patch-props", "owl-type-or", "page-option", "owl-xpath", "owl-tref",
                      "owl-this", "owl-hook", "python-api", "patch-target", "patch-shadow", "view-xmlid",
                      "view-anchor", "qweb-tcall", "qweb-tesc", "data-base64", "calendar-attr", "security-model",
                      "access-or", "access-grant", "access-op", "field-lit", "fa-icon", "icon-name",

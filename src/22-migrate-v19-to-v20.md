@@ -161,6 +161,22 @@ file, `oi-arrow-right` maps to `arrow_forward`); a `fa-…` value stays with `fa
 `cloud_base`, `email_suite`, `mail_manual_routing`, `odoo_email_from`. Fix them in their own
 group's `Fx.1`, and look at the Settings page in the browser: a wrong name shows as text.
 
+**A hyphenated `oi-…` class is the same leftover.** 19.0 and saas-19.4 drew
+`<i class="oi oi-chevron-left">` from the Odoo UI icon font. At 20.0 the glyph comes only
+from `data-icon` (`icons.scss` `content: attr(data-icon)`), and `oi-chevron-left` is not a
+class the font understands, so the button is blank. Observed 2026-10-10: the KnowSystem
+website article Previous / Next buttons (`knowsystem_website/views/templates.xml`).
+Successor, same map as the `icon=` names above:
+
+```xml
+<i class="oi" data-icon="chevron_left"/>
+<i class="oi" data-icon="chevron_right"/>
+```
+
+`oi-fw` / `oi-lg` / `oi-2x` stay. Those are size modifiers (one hyphen), not icon names.
+Kind `icon-name` flags a class token `oi-<word>-<word>` in `.xml` / `.js` as well as
+`icon="oi-…"`.
+
 Core never migrated these (pick by hand from the Material Symbols set; social brands use the
 `oi_*` glyphs of `odoo_ui_icons`): `fa-telegram`, `fa-envelope-square`, `fa-paste`,
 `fa-superpowers`, `fa-dedent`, `fa-indent`, `fa-slack`, `fa-arrows-v`, `fa-arrows-h`,
@@ -1747,6 +1763,32 @@ same breath as `useState` unless a runtime error names them. On **20.0** that gr
 the compat throws at construction (F12) — every `static props` / `static defaultProps` becomes
 `props = useProps({...})` at Fx.1.
 
+### Website page options match `<main>`, not the inner block
+
+The Style tab's **Page Options** list is `getPageContainers()`, which starts at
+`this.editable.querySelector("main")` (`html_builder` `builder_options_plugin.js`,
+19.0 `:369`, saas-19.4 `:462`, 20.0 `:461`). `getClosestElements` then walks
+**ancestors only** (`element.closest`). A selector `.appointment_reservation_layout`
+does not match `<main>` or anything above it, so the panel stays empty. The same
+selector still matches when that inner node is the click target, which is why a
+block click can look fine while Page Options does not.
+
+19.0 already wrote the page selector as `main:has(.class)` on the
+`builder_options` resource (`business_appointment_website`
+`appointment_reservation_option.js:15`). Moving that resource into an inherit of
+`website.BuilderOptions` at `page_options_hook` must **copy that string**. Do not
+shorten it to the inner class.
+
+```xml
+<!-- BEFORE — Page Options stays empty -->
+<appointment_layout_option selector=".appointment_reservation_layout" .../>
+<!-- AFTER — same string 19.0 had in JS -->
+<appointment_layout_option selector="main:has(.appointment_reservation_layout)" .../>
+```
+
+`main` alone is valid (the page element itself). `main .class` is not: that is a
+descendant, and the walk never goes down. Checker kind `page-option`.
+
 ### Moved modules (import path only)
 
 | 19.0 import | 20.0 import | Symbol |
@@ -1853,12 +1895,14 @@ About 30s for one module or group, ~3min for 93 modules. Findings:
 | `field-lit` | a literal use of a removed field name (`datas`, `product_uom`), leftover `resource_calendar_id.tz`, leftover `timezone(self.tz)` on a calendar method (`20_16` Gx.5 `_ba_attendance_intervals`), or `<field name="tz">` on a `resource.calendar` record (successor `resource.mixin.tz` — `20_16` Layer-1 demo died `Invalid field 'tz'`) |
 | `manifest-version` | a serie-prefixed `__manifest__.py` `version` (`19.0.x` / `20.0.x`) while `--odoo-ref` is a `saas-*` branch — `check_version` sets `installable=False` |
 | `fa-icon` | (20.0) Font Awesome markup (`fa fa-…`, `icon="fa-…"`, bare `fa-…` token) in a `.xml` / `.js` / `.py` file while the target has neither the `web.fontawesome` bundle nor `font-awesome.css`. **One finding per file** with the icon names; `static/lib` excluded. Quiet on a saas-19.4 target |
+| `icon-name` | (20.0) a hyphenated icon name. `icon="oi-arrow-right"` is printed as literal text (`--` in front of the label). `class="oi oi-chevron-left"` draws nothing, because the glyph comes only from `data-icon`. Successor `icon="arrow_forward"` / `<i class="oi" data-icon="chevron_left"/>`. `oi-fw` / `oi-lg` / `oi-2x` are size modifiers and stay. One finding per file. Quiet on a saas-19.4 target |
 | `serie-link` | (released target only: `--odoo-ref origin/20.0`) an `apps.odoo.com/apps/modules/<older>.0/` link or a `ticket_version=<older>.0` live-test URL in a `.xml` / `.py` / `.js` file (views, manifests). Successor: the target serie (F15). `static/description/` and `i18n/` are not scanned. One finding per file. Quiet on a saas-19.4 target |
 | `owl-ref` | (20.0) `t-custom-ref="x"` in our `static/src` template or inline `xml\`` while the target compat no longer registers the directive. Successor `x = signal.ref()` + `t-ref="this.x"`. The JS half (`useRef`, `useChildRef`, `useForwardRefToParent`, `onRendered`, `useChildSubEnv`) is `js-symbol` with hints |
 | `ctrl-hook` | an override on a class imported from `odoo.addons` (controllers), resolved through our own addons to the core base (`documentation_builder` → `knowsystem_website` → `portal`), whose base method existed at the **base** ref and is gone at the target (`_prepare_home_portal_values`, `scan_barcode_with_geolocation`) — never called / `AttributeError` on `super()` — or whose target signature has parameters the override does not accept (`scan_barcode` `latitude`, `mail_attachment_delete` `access_token_by_attachment_id`). Judged against **our** override, so a saas-era rename the port already adopted stays quiet; `**kwargs` accepts anything |
 | `py-import` | `from odoo.<x> import NAME` where NAME is importable at the **base** ref and not at the target (`PREFETCH_MAX`), or the module itself is gone — an `ImportError` at module load that fails the whole addon. Resolves star re-exports one level (`odoo/tools/__init__.py`, the `safe_eval` package) and stays quiet when neither ref shows the name (resolver limit, not a finding) |
 | `patch-props` | (20.0) `patch(X.prototype, {...})` whose body reads `this.props` while X and its ancestors (resolved through imports at the target) assign neither `props =` nor `this.props =`. OWL 3 sets `this.props` only through `useProps`, so the read is `undefined.x` (mail `Chatter`, F14). Successor: the class's prop signals (`this.threadId()`) or a `useProps` under another name |
 | `owl-type-or` | `t.or(a, b)` (or `types.or(a, b)`) in our `static/src` JS while the target OWL `union` loops over one list (saas-19.4 and 20.0; quiet on 19.0). With props validation on (debug or test mode) the component throws `types22 is not iterable` at construction (F16). Successor `t.or([a, b])` |
+| `page-option` | a `selector` on an option inserted at `page_options_hook` that does not match `<main>`. Page Options starts at `main` and only walks ancestors, so `.class` leaves the panel empty (`20_16` Chose time). Successor `main:has(.class)`, the string 19.0 already used in the `builder_options` resource. Quiet when the target has no `getPageContainers()` on `main` |
 
 `js-import` carries a successor hint for moved files (`MOVED_JS_PATHS`: `action_service` →
 `action_plugin`) and `view-xmlid` for removed views with a known replacement
@@ -2095,6 +2139,17 @@ Each of these cost a false-positive round on the first run, so do not "simplify"
 - **`record.data.bundle_id[0]` is not a named import.** `js-symbol` on
   exports missed it. saas `browse` then asserts `Invalid falsy real id`.
   Checker greps `.\w+_id[0]` (`20_4` PasswordCopy / kanban).
+- **`class="oi oi-chevron-left"` is not `icon=`.** `icon-name` only read the
+  attribute, so the KnowSystem article pager stayed blank (`20_15`). A class
+  token with a second hyphen is the same leftover; `oi-fw` / `oi-lg` / `oi-2x`
+  are size modifiers and stay quiet.
+- **A page-option selector that matches the inner block is not a page
+  option.** `getPageContainers()` starts at `<main>` and `closest()` only
+  walks up. `.appointment_reservation_layout` matches a click on that div
+  and matches nothing in Page Options (`20_16` Chose time, empty Style
+  list). 19.0 already had `main:has(...)` in the JS resource, and the
+  port commit kept it; shortening the XML selector to the inner class
+  drops the option. Checker `page-option`.
 
 ## Verify at runtime, not from this rule
 
@@ -2986,6 +3041,14 @@ without evidence does not belong in this rule.
   (`mail.Composer`); XPaths still see the nodes the core extension adds, because extensions
   of one parent apply in load order. Checker `owl-xpath` flags a `t-inherit` of an
   extension-only target name: 1 finding on the pre-fix `20_port`, 0 on fixed `20.0`.
+- *(2026-10-10, `20_15` website article pager)* Previous / Next on a KnowSystem
+  article were blank buttons. The template still had `class="oi oi-chevron-left"` /
+  `oi-chevron-right`. `icon-name` only read `icon="…"`, and `fa-icon` does not see an
+  `oi-` class, so both were clean. 20.0 draws the glyph from `data-icon` only
+  (`icons.scss` `content: attr(data-icon)`). Successor `<i class="oi" data-icon="chevron_left"/>`
+  / `chevron_right` (up/down stay `expand_less` / `expand_more`). Size modifiers
+  `oi-fw` / `oi-lg` / `oi-2x` are not icon names. Kind `icon-name` now flags a class
+  token `oi-<word>-<word>` in `.xml` / `.js`.
 - *(2026-10-09, `20_17` B1 review)* Opening the Customer Scoring tab with `?debug=assets`
   on `fx8_20_17` died with `TypeError: types22 is not iterable` at `validateUnion`
   (`owl.js:1314`): the scoring form declared `t.or(t.number(), t.boolean())`. Every gate had
@@ -2996,3 +3059,21 @@ without evidence does not belong in this rule.
   release 20.0.1.0.15. F16 and kind `owl-type-or`: 10 findings on the pre-fix `20_port`, 1 on
   the pre-fix `20_17`, 0 on every current tip except the frozen `20_9` (3), 0 against a 19.0
   target. The browser pass needs `?debug=assets` to see this class at all.
+- *(2026-10-12, `20_16` website editor)* Page Options on the appointment
+  pages was an empty Style list. 19.0 registers the option as
+  `selector: "main:has(.appointment_reservation_layout)"` on the
+  `builder_options` resource
+  (`appointment_reservation_option.js:15` at `origin/19.0`). The port
+  commit kept that string on the XML `selector`. The worktree then
+  shortened every page option to the inner class
+  (`.appointment_reservation_layout`, and the same for resources,
+  services, slots, contact, confirm, full details, and the portal
+  sidebar). `getPageContainers()` is
+  `computeContainers(editable.querySelector("main"))`
+  (20.0 `builder_options_plugin.js:461-462`; the same call is at 19.0
+  `:369` and saas-19.4 `:462`). `getClosestElements` uses
+  `element.closest` (`:817-823`), so a descendant class never matches
+  `<main>`. Clicking the inner block still opened the option, which hid
+  the miss. Successor: put `main:has(...)` back. After that, Chose time
+  showed Time Slots, Progress Bar, Expiration Timers, and Introduction.
+  Kind `page-option`.
