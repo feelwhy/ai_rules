@@ -1530,6 +1530,17 @@ GONE_JS_PATHS = {
 
 # Method calls that left a surviving file. Distinct from js-symbol (named imports).
 GONE_JS_CALLS = {
+    "new Deferred(": (
+        "@odoo/hoot-mock no longer exports Deferred (Odoo 20 Hoot). "
+        "A leftover new Deferred() throws Deferred is not a constructor "
+        "inside WebSuite, which runs for every module that ships "
+        "web.assets_unit_tests *.test.js (odoo_typo_reporter, 2026-10-16). "
+        "Successor: const d = Promise.withResolvers(); await d.promise."
+    ),
+    "import { Deferred": (
+        "Same hole as new Deferred(: the named import from "
+        "@odoo/hoot-mock is gone. Successor: Promise.withResolvers()."
+    ),
     "._replaceWith(": (
         "StaticList._replaceWith is gone at saas-19.4 (19.0 "
         "static_list.js:1081). Successor: list.set(ids) "

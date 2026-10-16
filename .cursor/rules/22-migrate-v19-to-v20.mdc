@@ -1751,10 +1751,30 @@ surviving file. Checker kind: `js-symbol`.
 |---|---|---|
 | `@odoo/owl` | `useState` / `reactive` | `proxy` from `@odoo/owl` |
 | `@web/core/utils/concurrency` | `Deferred` | `Promise.withResolvers()` (polyfill in `web/static/src/polyfills/promise.js`). 158 core imports → 0. `KeepLast` / `Mutex` / `Race` stay |
+| `@odoo/hoot-mock` | `Deferred` | same successor. `new Deferred()` throws inside the Hoot `WebSuite` (see below). Checker `js-symbol` tokens `new Deferred(` and `import { Deferred` |
 | `@web/core/assets` | `LazyComponent` | `@web/core/lazy_component` |
 | `@web/core/emoji_picker/emoji_picker` | `loadEmoji` | `useLoadEmoji` from `@web/core/emoji_picker/emoji_loader` |
 | `@web/core/utils/reactive` | `effect` | rewrite; OWL 3 `effect(fn)` is not the two-arg helper |
 | `@html_builder/core/utils` | `BaseOptionComponent` | `@html_builder/core/base_option_component` |
+
+### Hoot runs the web suite for every module that ships a unit test
+
+`web.tests.test_js` `WebSuite` and `MobileWebSuite` are tagged `hoot` and
+`CrossModule`. They open `/web/tests` for every module that contributes a
+`*.test.js` to `web.assets_unit_tests`. A `--test-tags` run that names only
+other modules still executes that suite when any tested module is in the
+bundle. The only tools file of that shape is
+`odoo_typo_reporter/static/tests/interactions/typo_reporter.test.js`. A red
+Hoot test fails the whole candidate, including modules that were not named.
+
+`@odoo/hoot-mock` does not export `Deferred`. Successor:
+`const pending = Promise.withResolvers(); await pending.promise`.
+Checker kind `js-symbol` flags `new Deferred(` and `import { Deferred`.
+
+Browser tests skip with no error when Chrome or `websocket-client` is missing
+(`odoo/tests/common.py` logs the warning, then `SkipTest`). A green count that
+includes skipped browser tests has not run them. The Demo 20 image installs
+both.
 
 `static props = { x: { type: Object } }` is still used in 160 core `web` files on saas-19.4
 (compat `Component` wrapper), so on a **saas-19.4** target do not rewrite props schemas in the
@@ -3076,3 +3096,21 @@ without evidence does not belong in this rule.
   the miss. Successor: put `main:has(...)` back. After that, Chose time
   showed Time Slots, Progress Bar, Expiration Timers, and Introduction.
   Kind `page-option`.
+- *(2026-10-16, Demo 20 candidate :14)* `@odoo/hoot-mock` no longer exports
+  `Deferred`. `odoo_typo_reporter` `typo_reporter.test.js` used `new Deferred()`
+  and the Hoot `WebSuite` / `MobileWebSuite` (`web/tests/test_js.py`, tag
+  `hoot`, `CrossModule`) ran it for every candidate, because the file is in
+  `web.assets_unit_tests`. Four tests died `Deferred is not a constructor`.
+  Successor `Promise.withResolvers()`; await `.promise`. A selection helper
+  that does `container.firstChild` is null on `<input>` / `<textarea>` —
+  use `container.firstChild || container`. Checker `js-symbol` tokens
+  `new Deferred(` and `import { Deferred`. Grep of tools `20.0` `*.js` after
+  the fix: no `new Deferred(`. The same candidate showed browser tests skip
+  (`SkipTest` after `websocket-client module is not installed`,
+  `odoo/tests/common.py` ~1592) unless the image has Chrome and that package.
+  Passing tests that log ERROR on purpose (MCP tool and metadata failures)
+  are counted by the log gate; `@mute_logger` on those tests is what makes
+  `gate_errors` 0. Demo appointment creation must pick a customer with no
+  company or the resource's company, and a resource that is free for the
+  slot (`odootools_demo` `_demo_ba_free_booking`); a foreign-company customer
+  raises the overlap warning from `business.appointment`.
