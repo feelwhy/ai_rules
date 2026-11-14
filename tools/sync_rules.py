@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate .cursor/rules/*.mdc and AGENTS.md from src/*.md (+ optional overrides/).
+"""Generate .cursor/rules/*.mdc and docs/rules.md from src/*.md (+ optional overrides/).
 
 Usage:
   python3 tools/sync_rules.py          # write generated files
@@ -16,7 +16,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
 OVERRIDES_DIR = REPO_ROOT / "overrides"
 OUT_RULES = REPO_ROOT / ".cursor" / "rules"
-AGENTS_PATH = REPO_ROOT / "AGENTS.md"
+AGENTS_PATH = REPO_ROOT / "docs" / "rules.md"
+# Cursor loads every file named AGENTS.md (the root one, and nested ones) with alwaysApply.
+# The generated copy must not use that name.
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
 
@@ -89,6 +91,15 @@ def render_agents(items: list[tuple[str, dict[str, str], str]]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+def agents_md_files() -> list[Path]:
+    found: list[Path] = []
+    for path in REPO_ROOT.rglob("AGENTS.md"):
+        if ".git" in path.parts:
+            continue
+        found.append(path)
+    return found
+
+
 def build() -> tuple[dict[str, str], str]:
     items = load_sources()
     mdc_map = {rid: render_mdc(meta, body) for rid, meta, body in items}
@@ -105,13 +116,19 @@ def write_all(mdc_map: dict[str, str], agents: str) -> None:
             existing.unlink()
     for rid, content in mdc_map.items():
         (OUT_RULES / f"{rid}.mdc").write_text(content, encoding="utf-8")
+    AGENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     AGENTS_PATH.write_text(agents, encoding="utf-8")
+    for stale in agents_md_files():
+        stale.unlink()
 
 
 def check(mdc_map: dict[str, str], agents: str) -> int:
     drift = False
     if not AGENTS_PATH.is_file() or AGENTS_PATH.read_text(encoding="utf-8") != agents:
         print(f"DRIFT: {AGENTS_PATH}", file=sys.stderr)
+        drift = True
+    for stale in agents_md_files():
+        print(f"STALE: {stale} (Cursor injects every file named AGENTS.md)", file=sys.stderr)
         drift = True
     for rid, content in mdc_map.items():
         path = OUT_RULES / f"{rid}.mdc"

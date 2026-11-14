@@ -12,7 +12,7 @@ faOtools-specific rules live in sibling repo [`ai_rules_fao`](https://github.com
 | `overrides/<id>.md` | Optional body overrides (same `id`) |
 | `tools/sync_rules.py` | Generator |
 | `.cursor/rules/*.mdc` | **Generated** — do not edit by hand |
-| `AGENTS.md` | **Generated** aggregate |
+| `docs/rules.md` | **Generated** aggregate. The name is not `AGENTS.md`: Cursor injects every file with that name into the chat |
 
 ## Frontmatter
 
@@ -33,7 +33,7 @@ apply: always   # or: agent
 ```bash
 cd /home/feelwhy/Odoo/ai_rules
 # edit src/*.md
-python3 tools/sync_rules.py          # write .mdc + AGENTS.md
+python3 tools/sync_rules.py          # write .mdc + docs/rules.md
 python3 tools/sync_rules.py --check  # CI / pre-commit drift check
 ```
 

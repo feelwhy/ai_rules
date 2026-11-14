@@ -48,4 +48,4 @@ When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map
 
 ## Editing rules
 
-Edit `src/*.md` only, then run `python3 tools/sync_rules.py`. Do not hand-edit `.cursor/rules/*.mdc` or `AGENTS.md`.
+Edit `src/*.md` only, then run `python3 tools/sync_rules.py`. Do not hand-edit `.cursor/rules/*.mdc` or `docs/rules.md`.
