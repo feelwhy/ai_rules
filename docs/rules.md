@@ -143,6 +143,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `06-verify-hypotheses` | Check the hypothesis before recommending |
 | `18-xml-translate-html` | Never empty/`<i/>` icons in `xml_translate` HTML |
 | `30-command-vocabulary` | Natural-language → concrete commands |
+| `40-paseo-orchestration` | Paseo only: the top chat delegates to a profile; a marked worker does its role |
 
 ## Agent-requestable (pull when the task matches)
 
@@ -161,7 +162,6 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `20-migrate-v17-to-v18` | Port module 17 → 18 |
 | `21-migrate-v18-to-v19` | Port module 18 → 19 |
 | `22-migrate-v19-to-v20` | Port module 19 → 20 (via saas-19.4); living rule + `tools/check_migrate_v20.py` |
-
 ## Companion repo
 
 When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation **and live loader apply** on 19.0+; never skip unless the user explicitly says to). HTML in those fields must follow always-on `18-xml-translate-html`.
@@ -4448,3 +4448,19 @@ A different target or serie is a new launch, not this case.
    Mailpit URL, and the database name — do not make the user hunt for them.
 4. **Errors.** `env-up.sh` and Febado `docker-dev.sh start` print `ERROR`/`CRITICAL`
    lines logged since start. Report them instead of claiming a clean launch.
+
+## 40-paseo-orchestration
+
+_Paseo — the top chat delegates to a profile; a marked worker does its role_
+
+# Paseo orchestration
+
+This rule applies only when Paseo tools are available to you (`list_profiles`, `create_agent`; in Claude Code `mcp__paseo__list_profiles`). Without them, skip this rule.
+
+- The message starts with `[Paseo worker: <role>]` — you are that worker. Do the role. Never launch agents. A limit or a missing model is the chain's job.
+- The message starts with «сам:» — do the task in this chat without delegating. The prefix is not part of the task.
+- Otherwise you are the orchestrator. Delegate the work; do not do it yourself.
+  1. Call `list_profiles` and read the notes. Never launch Оркестратор. The default is the full level. «эконом» in the message selects the notes that say «Экономный уровень». Use Deep challenger only when the user asks for it or the case is already stuck.
+  2. `create_agent` has no profile argument. Copy `provider/model`, `settings.modeId`, `settings.thinkingOptionId`, and the profile `options` as `settings.features`.
+  3. Start every message to the worker with `[Paseo worker: <profile name>]`.
+  4. One step, report the worker's result, then wait (`00-chunk-gate`). If the whole chain fails, say so and stop.
