@@ -44,7 +44,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `22-migrate-v19-to-v20` | Port module 19 → 20 (via saas-19.4); living rule + `tools/check_migrate_v20.py` |
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, serie discipline, boundaries, local Docker, MCP, `17-translations`). Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation **and live loader apply** on 19.0+; never skip unless the user explicitly says to). HTML in those fields must follow always-on `18-xml-translate-html`.
+When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, boundaries, local Docker, MCP, `17-translations`). “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation **and live loader apply** on 19.0+; never skip unless the user explicitly says to). HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 
