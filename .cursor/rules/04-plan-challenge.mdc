@@ -23,5 +23,15 @@ Before a large implementation or when a plan looks thin:
 - After a plan exists: **follow it, or change the numbered list and then follow**. Do
   not replace it with a newly invented sequence. Never mark a point done unless its
   check passed — all cases, including automatic plan updates. Never miss a point
-  without an explicit user command. Last step is always: consider skipped points
-  (`00-chunk-gate`).
+  without an explicit user command. Last step is always: consider skipped points (below).
+
+While implementing, reprint the numbered plan every turn with `You are here` on the current point. Keep the original numbers:
+
+```
+1. Add field X — done
+2. Wire payload — **You are here**
+3. Write the test
+4. Consider missed points
+```
+
+If the user explicitly said to skip a point, highlight it (`skipped: <user command>`). Do not mark it completed. The last plan step considers every skipped point and either does it, folds it into a new numbered step, or gets an explicit user OK to drop it.

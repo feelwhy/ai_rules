@@ -30,7 +30,7 @@ another serie, or data you did not query is a guess — do not deliver it as a f
    a permission), say it is a hypothesis, name the check that would settle it, and ask — never
    promote it to a conclusion.
 4. **Cite the evidence** in the reply: `path:line`, the command run, the query result, the log line,
-   the test outcome. "Should be fine" / "probably" is not a report (`01-process-confirmation`).
+   the test outcome. "Should be fine" / "probably" is not a report.
 5. **Don't stack on an unverified premise.** If step 1 is a guess, stop and check it before building
    steps 2-5 on top of it.
 6. **When the user reports a bug**, inspect or reproduce before proposing a fix; a fix for the wrong

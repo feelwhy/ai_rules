@@ -7,113 +7,37 @@ apply: always
 # Chunk gate (read this before anything else)
 
 **The default mode of work is: one small chunk, then stop and wait for the user.**
-Long autonomous runs are forbidden. An agent that disappears for many tool calls and
-comes back with a finished multi-file, multi-repo change has failed the task even if
-the code is correct — the user could not steer, review, or veto anything.
+Long autonomous runs are forbidden. An agent that disappears and comes back with a finished multi-file change has failed the task even if the code is correct.
 
-## What a chunk is
+A chunk is one idea the user can check in about a minute: typically one repo, about five files, and at most one build, test, or deploy. A bigger change is several chunks. Do the first one.
 
-One coherent change the user can check **in about a minute**:
-
-- typically **one repo** and **≤ ~5 files**
-- **at most one** build / test / deploy / long command
-- a single reviewable idea ("add field X", "wire payload key", "write this test")
-
-If the work does not fit that, it is **several** chunks. Split it and do the first one.
-
-## The gate
-
-After every chunk, **stop your turn** and report:
+After every chunk, stop and report:
 
 1. **What changed** — exact paths, and what each edit does.
 2. **What you verified** — the command run and its real result (`06-verify-hypotheses`).
 3. **What is next** — the single next chunk.
 4. **An explicit question** — "proceed with X?" Then wait.
 
-Do **not** start the next chunk in the same turn. "It was obviously next" is not
-confirmation. Silence is not confirmation.
+Silence is not confirmation. Deliver the plan as numbered chunks with a check each before any code. Approving a plan approves chunk 1 only. "Continue", "implement the plan", "finish the todos", and "do the last phase" mean **the next chunk**, not the rest of the list. Do not ask again for an action the user already requested in this message ("commit", "do X"). If they said "do it all, no check-ins", say how many chunks you will run, then run them.
 
-Do **not** ask for confirmation of an action the user already requested in this
-message. If they said "commit" / "commit (a)" / "do X", do that now — the
-post-chunk question is never "proceed with the commit?" / "proceed with X?".
-If they said **commit B / B1 / B2** / “push” / “open the MR”, that request **is**
-local Docker tests → check → fix → then MR (`16-commit-workflow`). Do not skip
-the local run, and do not ask “proceed with the MR?” after it is green.
+Follow the numbered plan. If it is wrong, change the list (say what changed and why), then follow the new list. Do not invent a second plan. A point is done only after its check passed. "I started it" is not done. Never mark it done in a todo, a reprint, or an automatic plan update. Skip a point only when the user explicitly said to skip it. A blocked point stays open. Review findings the plan said would be fixed belong in the current point.
 
-## Planning
+While implementing, keep the original numbers visible, with `You are here` on the current point (`00-plain-replies`). The reprint example and the skipped-point last step are `04-plan-challenge`.
 
-- A plan is delivered as a **numbered list of chunks**, each with its own check, before
-  any code is written. Get the plan approved first (`04-plan-challenge`).
-- **Approving a plan approves chunk 1 only.** A plan, a todo list, a phase list, or a
-  document in the repo is a map — never a licence to run the whole route unattended.
-- Phrases like "implement the plan", "finish the todos", "continue", "do the last phase"
-  mean **the next chunk**, not all remaining work.
-- If the user explicitly says "do it all, no check-ins", honor it — and say plainly how
-  many chunks you are about to run before starting.
+Stop the turn immediately on any of these:
 
-### Follow the plan (strict)
-
-Once a plan exists, **follow that numbered list**. If it is wrong, **change the list**
-(say what changed and why), then follow the new list. Do **not** invent a second plan
-mid-flight because it “seems better” — that is how the plan becomes a mess.
-
-**Never mark a plan point completed if it is not.** This is absolute — **all cases**,
-no exceptions: not todos, not the reprinted plan, not “what changed”, not a Cursor /
-automatic plan update, not a rewrite, not a mode or branch switch, not “while I’m here”.
-Partial work stays open. “I started it” is not done. The point’s check must have passed.
-
-**Never miss a plan point** unless the user **explicitly commanded** that skip
-(“skip 3”, “drop this point”). Blocked, inconvenient, or “we’ll do it later” is **not**
-a miss — stop, leave the point open (`You are here`), and ask. An automatic plan
-update must not hide, reorder-away, or complete a point.
-
-**Audit / review findings that the plan assumes will be fixed during implementation**
-belong **inside the matching plan step** — usually the **current** one — not a sidecar
-list and not “we’ll get to it”. Fold them into that step’s work and check before calling
-the step done.
-
-**While implementing, reprint the numbered plan every turn with `You are here` on the
-current point.** Keep the original numbers. Example:
-
-```
-1. Add field X — done
-2. Wire payload — **You are here**
-3. Write the test
-4. Consider missed points
-```
-
-**Missed points (user-commanded only).** If the user explicitly said to skip a point:
-**highlight it** on the reprint (`skipped: <user command>`). Do **not** mark it
-completed. The **last plan step** is always: consider every skipped point and either
-do it, fold it into a new numbered step, or get an explicit user OK to drop it.
-
-## Hard stops (stop the turn immediately, mid-work if needed)
-
-- ~10 write operations (edits / file creations) since the last user message
+- about ten writes since the last user message
 - a second repo is about to be touched
 - a manifest `version`, migration, or schema change is about to be added
-- a test / build / deploy run just finished — report it, do not keep editing
-  (**except B / B1 / B2**: red → fix and re-run locally; green → continue to
-  review + push. Do **not** skip the local run to avoid this stop, and do **not**
-  treat GitLab as the test run.)
+- a test, build, or deploy just finished — report it, do not keep editing
 - anything irreversible or shared: push, deploy, branch switch, delete, live write
-  (**except** the push / MR that is the last step of a B* the user already asked
-  for, and only after local tests are green)
 - the plan turned out wrong, or you found something the user does not know yet
+- a failure you have not reported
 
-## Never
+**Commit B / B1 / B2** is the exception (`16-commit-workflow`): the user's request already includes local Docker tests, then fix, then the MR. Do not ask "proceed with the MR?" after a green local run. Do not skip the local run. GitLab is not that run.
 
-- Batch unrelated fixes because "I was already in the file".
-- Add scope the user did not ask for (extra tests, refactors, doc updates, renames).
-- Keep working through a failure you have not reported.
-- Present hours of unsupervised work as a single result and ask for approval afterwards
-  — approval before the work is the whole point.
+Never batch unrelated fixes, add scope the user did not ask for, or present a long unsupervised run for approval afterwards.
 
-## Exempt (no gate needed)
+No gate is needed for read-only investigation, one literal typo fix, or the steps inside a chunk the user just approved.
 
-- Read-only investigation: reading, grepping, searching, querying.
-- One trivial edit the user asked for literally ("fix this typo").
-- Steps inside a chunk the user just approved.
-
-This rule outranks any instinct to be efficient or "helpful" by finishing early.
-When in doubt: smaller chunk, ask sooner.
+This rule outranks the instinct to finish early. When in doubt: smaller chunk, ask sooner.

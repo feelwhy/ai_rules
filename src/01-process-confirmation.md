@@ -1,17 +1,13 @@
 ---
 id: 01-process-confirmation
-description: Work step-by-step and confirm with the user before irreversible or multi-phase actions
+description: Confirm with the user before irreversible steps
 apply: always
 ---
 
 # Process confirmation
 
-For non-trivial work (multi-file changes, deploys, branch switches, deletions, migrations, publishes):
+Before an irreversible step, say the short ordered list and wait. The gates are: deleting duplicates, pushing, switching the shared checkout's serie, `docker compose down`, and a live write.
 
-1. **State the plan** in a short ordered list before doing irreversible steps.
-2. **Confirm with the user** at phase gates (delete duplicates, push remotes, switch shared checkout serie, `docker compose down`, live writes).
-3. **Do one phase at a time** when the plan says so; do not batch “while I’m here” deletions or refactors. Follow the approved numbered plan, or change that list and follow the new one — do not invent a parallel plan (`00-chunk-gate`).
-4. **Report outcomes** with concrete evidence (commands run, paths changed, test results) — not “should be fine”.
-5. If blocked (foreign WIP, another chat on the same DB/branch, missing permission, unclear target serie), **stop and ask** instead of improvising. Do not skip or mark a plan point done — blocked is not a miss (`00-chunk-gate`, `07-parallel-sessions`).
+Stop and ask when you lack permission or the target serie is unclear. A blocked point stays open (`00-chunk-gate`).
 
-Small single-file fixes in an already-agreed task do not need a ceremony gate; still avoid surprise side effects.
+Foreign WIP and another chat on the same database are `03-never-discard-wip` and `07-parallel-sessions`. Evidence instead of "should be fine" is `06-verify-hypotheses`. One agreed single-file fix does not need this list.

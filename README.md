@@ -13,6 +13,8 @@ faOtools-specific rules live in sibling repo [`ai_rules_fao`](https://github.com
 | `tools/sync_rules.py` | Generator |
 | `.cursor/rules/*.mdc` | **Generated** — do not edit by hand |
 | `docs/rules.md` | **Generated** aggregate. The name is not `AGENTS.md`: Cursor injects every file with that name into the chat |
+| `CLAUDE.md` | **Generated** always-on rules for Claude Code |
+| `.claude/skills/` | **Generated** procedures (`apply: agent`). Claude loads a skill when the task matches |
 
 ## Frontmatter
 
@@ -24,8 +26,8 @@ apply: always   # or: agent
 ---
 ```
 
-- `apply: always` → `alwaysApply: true` in the `.mdc`
-- `apply: agent` → `alwaysApply: false` (agent-requestable)
+- `apply: always` → `alwaysApply: true` in the `.mdc`, and the body is copied into `CLAUDE.md`
+- `apply: agent` → `alwaysApply: false` in the `.mdc`, and the body becomes a Claude skill
 - No `globs:` — distribution is by which workspace folders include this repo
 
 ## Sync workflow
