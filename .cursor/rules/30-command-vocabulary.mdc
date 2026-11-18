@@ -5,18 +5,18 @@ alwaysApply: true
 
 # Command vocabulary
 
-Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active serie** (tools git branch / `env-serie.sh`). Never invent host `odoo-bin` commands.
+Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the branch of the tree `env-up` mounts, not whatever the shared `tools` checkout happens to be on. Never invent host `odoo-bin` commands. A launch does not `git checkout`.
 
 | User says (approx.) | Do |
 |---------------------|-----|
 | run odoo 19 / demo 19 | `faotools_env/local/env-up.sh demo19` |
-| run odoo 19 enterprise | `env-serie.sh 19.0` if needed, then `env-up.sh demo19e` |
+| run odoo 19 enterprise | `env-up.sh demo19e` |
 | run odoo 17 / 18 | `env-up.sh demo17` / `demo18` (add `e` for enterprise) |
 | start / launch **the same** target again, restart it | `env-up.sh <that-target> --restart` **only** — see below |
 | run support / faotools.com locally | `env-up.sh support` |
 | run life | `env-up.sh life` |
-| switch serie / change version / switch branch to 18 | put the serie repos on `18.0` — on the faOtools hub follow `ai_rules_fao` `01-hub-serie` (explicit per-repo checkout, then pull) |
-| pull changes | fast-forward the current branch of the hub repos with `--ff-only` (`ai_rules_fao` `01-hub-serie`) |
+| switch serie / change version / switch branch to 18 | `faotools_env/local/env-serie.sh 18.0` — it prints the trees and does not check out (`ai_rules_fao` `01-hub-serie`). Then edit those trees |
+| pull changes | fast-forward the tree that is already on that branch with `--ff-only` (`ai_rules_fao` `01-hub-serie`). Do not `git checkout` |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
 | odoo shell / psql | `env-shell.sh <target>` / `env-shell.sh <target> psql` |
 | show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`). Febado: `febado/scripts/docker-dev.sh logs` (Cursor tab `febado Odoo logs`) |
@@ -34,7 +34,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
 | prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). On 19.0+ **always** finish step 8 (TM + live loader apply) in the same job; skip translations only if the user **explicitly** says so |
 
-If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.
+If the serie is unclear, ask. `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` is only the shared checkout. `env-serie.sh <serie>` prints the tree a launch will mount.
 
 ## Same target again: restart only
 
@@ -53,9 +53,10 @@ A different target or serie is a new launch, not this case.
 
 ## Launching a local target: what the user must always get
 
-1. **Speed.** A launch is a container start: ~1.5s warm, ~6s cold, ~25s when the hub
-   has to switch serie. Anything in the minutes means the target was never restored
-   or neutralized — run `env-prepare.sh --check`, fix the **refresh**, and say so.
+1. **Speed.** A launch does not switch branches. Reusing a healthy container takes
+   a few seconds. Creating the container does not copy the baked addon tree.
+   Anything in the minutes means the target was never restored or neutralized —
+   run `env-prepare.sh --check`, fix the **refresh**, and say so.
    Never present a multi-minute wait as normal.
 2. **Logs.** Stream them in a **visible** Cursor terminal tab (agent shells stay
    hidden). faOtools: `env-up.sh <target>` with no `--no-logs` — it follows on a

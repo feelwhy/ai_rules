@@ -354,17 +354,9 @@ longer matches the worktree the user's server is reading.
 
 ## Shared worktree + long-lived Docker Odoo
 
-Shared checkouts under `/home/feelwhy/Odoo/` are bind-mounted into Docker (Febado `:23069`, faOtools `env-up` targets, etc.). Switching the
-checked-out branch (or stashing files that exist only as WIP / on another
-branch) changes what the live server serves.
+Febado `:23069` bind-mounts the shared `febado` checkout. Switching that checkout changes what that server serves. Do not switch it to serve this chat. Do not switch away from a branch that holds **foreign** WIP the user may be browsing unless they ask. After any checkout the user asked for, warn if `:23069` may now be missing code that was visible a minute ago.
 
-- **This chat’s active branch must live in the shared checkout** so `:23069`
-  runs current code and SCM shows what is uncommitted
-  (see `ai_rules_fao` hub serie discipline).
-- Do not switch away from a branch that holds **foreign** WIP the user may be
-  browsing unless they ask.
-- After any allowed branch change, warn if `:23069` may now be missing code
-  that was visible a minute ago.
+faOtools `env-up` does not follow a checkout done for the launch. It mounts the shared checkout only when that checkout is already on the serie branch, otherwise `_worktrees/<repo>-<serie>` (`ai_rules_fao` `01-hub-serie`). Edit that tree. Do not `git checkout` the hub so a demo sees your files.
 
 ## If you already disturbed foreign WIP
 
@@ -492,7 +484,7 @@ Companion: `03-never-discard-wip` (do not discard). This rule is about
 Any of:
 
 - editing files another chat may also be editing
-- `git checkout` / `env-serie.sh` / branch or serie switch
+- `git checkout` of a shared checkout (a launch does not do this)
 - `env-up` (`--fresh`, `-u`, `-i`, `--test`, restore, neutralize)
 - Febado stack start/recreate, or a restart of a target another chat is using
 - live MCP / production writes (faotools.com, master, life)
@@ -536,16 +528,13 @@ another chat is testing is not — ask.
 
 ## Branches: do not spoil the other chat
 
-One checkout = one visible branch for every chat and every bind-mounted
-Odoo.
+faOtools `env-up` mounts the serie tree. It does not `git checkout` the shared hub. Launching 19 while `tools` is on 18.0 is normal. Edit the tree `env-serie.sh` prints for that serie.
 
-- Do **not** switch branch / serie to serve this chat if another chat's
-  WIP or intended branch is checked out (`03-never-discard-wip`,
-  `ai_rules_fao` `01-hub-serie`).
-- Do **not** hide their branch by parking this work only in a side
-  worktree while the shared tree moves.
-- After any **user-approved** switch, say which chats / running
-  containers now see different code.
+Febado `:23069` still bind-mounts the shared `febado` checkout. Do not switch that checkout to serve this chat.
+
+- Do **not** `git checkout` a shared repo so a demo matches this chat (`03-never-discard-wip`, `ai_rules_fao` `01-hub-serie`).
+- Do **not** move the shared checkout out from under another chat's WIP.
+- After any checkout the user explicitly asked for, say which chats and running containers now see different code.
 
 ## If you would collide
 
@@ -4386,18 +4375,18 @@ _Natural-language commands mapped to hub / Docker actions_
 
 # Command vocabulary
 
-Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active serie** (tools git branch / `env-serie.sh`). Never invent host `odoo-bin` commands.
+Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the branch of the tree `env-up` mounts, not whatever the shared `tools` checkout happens to be on. Never invent host `odoo-bin` commands. A launch does not `git checkout`.
 
 | User says (approx.) | Do |
 |---------------------|-----|
 | run odoo 19 / demo 19 | `faotools_env/local/env-up.sh demo19` |
-| run odoo 19 enterprise | `env-serie.sh 19.0` if needed, then `env-up.sh demo19e` |
+| run odoo 19 enterprise | `env-up.sh demo19e` |
 | run odoo 17 / 18 | `env-up.sh demo17` / `demo18` (add `e` for enterprise) |
 | start / launch **the same** target again, restart it | `env-up.sh <that-target> --restart` **only** — see below |
 | run support / faotools.com locally | `env-up.sh support` |
 | run life | `env-up.sh life` |
-| switch serie / change version / switch branch to 18 | put the serie repos on `18.0` — on the faOtools hub follow `ai_rules_fao` `01-hub-serie` (explicit per-repo checkout, then pull) |
-| pull changes | fast-forward the current branch of the hub repos with `--ff-only` (`ai_rules_fao` `01-hub-serie`) |
+| switch serie / change version / switch branch to 18 | `faotools_env/local/env-serie.sh 18.0` — it prints the trees and does not check out (`ai_rules_fao` `01-hub-serie`). Then edit those trees |
+| pull changes | fast-forward the tree that is already on that branch with `--ff-only` (`ai_rules_fao` `01-hub-serie`). Do not `git checkout` |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
 | odoo shell / psql | `env-shell.sh <target>` / `env-shell.sh <target> psql` |
 | show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`). Febado: `febado/scripts/docker-dev.sh logs` (Cursor tab `febado Odoo logs`) |
@@ -4415,7 +4404,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`) and the **active s
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
 | prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). On 19.0+ **always** finish step 8 (TM + live loader apply) in the same job; skip translations only if the user **explicitly** says so |
 
-If serie is unclear, check `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` or ask.
+If the serie is unclear, ask. `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` is only the shared checkout. `env-serie.sh <serie>` prints the tree a launch will mount.
 
 ## Same target again: restart only
 
@@ -4434,9 +4423,10 @@ A different target or serie is a new launch, not this case.
 
 ## Launching a local target: what the user must always get
 
-1. **Speed.** A launch is a container start: ~1.5s warm, ~6s cold, ~25s when the hub
-   has to switch serie. Anything in the minutes means the target was never restored
-   or neutralized — run `env-prepare.sh --check`, fix the **refresh**, and say so.
+1. **Speed.** A launch does not switch branches. Reusing a healthy container takes
+   a few seconds. Creating the container does not copy the baked addon tree.
+   Anything in the minutes means the target was never restored or neutralized —
+   run `env-prepare.sh --check`, fix the **refresh**, and say so.
    Never present a multi-minute wait as normal.
 2. **Logs.** Stream them in a **visible** Cursor terminal tab (agent shells stay
    hidden). faOtools: `env-up.sh <target>` with no `--no-logs` — it follows on a

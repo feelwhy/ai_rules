@@ -44,17 +44,9 @@ longer matches the worktree the user's server is reading.
 
 ## Shared worktree + long-lived Docker Odoo
 
-Shared checkouts under `/home/feelwhy/Odoo/` are bind-mounted into Docker (Febado `:23069`, faOtools `env-up` targets, etc.). Switching the
-checked-out branch (or stashing files that exist only as WIP / on another
-branch) changes what the live server serves.
+Febado `:23069` bind-mounts the shared `febado` checkout. Switching that checkout changes what that server serves. Do not switch it to serve this chat. Do not switch away from a branch that holds **foreign** WIP the user may be browsing unless they ask. After any checkout the user asked for, warn if `:23069` may now be missing code that was visible a minute ago.
 
-- **This chat’s active branch must live in the shared checkout** so `:23069`
-  runs current code and SCM shows what is uncommitted
-  (see `ai_rules_fao` hub serie discipline).
-- Do not switch away from a branch that holds **foreign** WIP the user may be
-  browsing unless they ask.
-- After any allowed branch change, warn if `:23069` may now be missing code
-  that was visible a minute ago.
+faOtools `env-up` does not follow a checkout done for the launch. It mounts the shared checkout only when that checkout is already on the serie branch, otherwise `_worktrees/<repo>-<serie>` (`ai_rules_fao` `01-hub-serie`). Edit that tree. Do not `git checkout` the hub so a demo sees your files.
 
 ## If you already disturbed foreign WIP
 
