@@ -35,9 +35,12 @@ longer matches the worktree the user's server is reading.
 3. If anything is foreign or unknown → **stop**. Tell the user what would be
    affected. Ask what to do. Do not stash, rebase, switch branch, or force a
    clean tree yourself.
-4. If foreign WIP blocks a switch: **stop and ask**. Do **not** “solve” it by
-   doing this chat’s real work only in a side worktree while the shared tree
-   stays elsewhere — see hub serie discipline in `ai_rules_fao`.
+4. If foreign WIP blocks a switch: **stop and ask**. Do not check out the
+   shared hub to get past it. A faOtools launch mounts the serie tree, so
+   edit that tree — the worktree that has the branch checked out, usually
+   `_worktrees/<repo>-<branch>` — and leave the shared checkout where it is
+   (`ai_rules_fao` `01-hub-serie`). Febado `:23069` reads the shared `febado`
+   checkout, so that work stays in the shared checkout.
 5. Committing *only your* paths on a new branch in the **shared** checkout is
    fine when that does not touch foreign files — never "clear the desk" first.
 

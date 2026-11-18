@@ -346,9 +346,12 @@ longer matches the worktree the user's server is reading.
 3. If anything is foreign or unknown → **stop**. Tell the user what would be
    affected. Ask what to do. Do not stash, rebase, switch branch, or force a
    clean tree yourself.
-4. If foreign WIP blocks a switch: **stop and ask**. Do **not** “solve” it by
-   doing this chat’s real work only in a side worktree while the shared tree
-   stays elsewhere — see hub serie discipline in `ai_rules_fao`.
+4. If foreign WIP blocks a switch: **stop and ask**. Do not check out the
+   shared hub to get past it. A faOtools launch mounts the serie tree, so
+   edit that tree — the worktree that has the branch checked out, usually
+   `_worktrees/<repo>-<branch>` — and leave the shared checkout where it is
+   (`ai_rules_fao` `01-hub-serie`). Febado `:23069` reads the shared `febado`
+   checkout, so that work stays in the shared checkout.
 5. Committing *only your* paths on a new branch in the **shared** checkout is
    fine when that does not touch foreign files — never "clear the desk" first.
 
@@ -4402,7 +4405,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | commit A1 | local commit only, **with** a Cursor review first |
 | commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
-| prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). On 19.0+ **always** finish step 8 (TM + live loader apply) in the same job; skip translations only if the user **explicitly** says so |
+| prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — skill `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). The live bans are `33-release-gates` |
 
 If the serie is unclear, ask. `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` is only the shared checkout. `env-serie.sh <serie>` prints the tree a launch will mount.
 
