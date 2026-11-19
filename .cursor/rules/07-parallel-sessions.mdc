@@ -21,7 +21,7 @@ Any of:
 - `git checkout` of a shared checkout (a launch does not do this)
 - `env-up` (`--fresh`, `-u`, `-i`, `--test`, restore, neutralize)
 - Febado stack start/recreate, or a restart of a target another chat is using
-- live MCP / production writes (faotools.com, master, life)
+- live MCP / production writes (faotools.com, master, any other live database)
 
 Read-only search does not need this gate.
 

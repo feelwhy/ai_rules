@@ -180,6 +180,12 @@ def hub_root() -> Path | None:
     return None
 
 
+def life_root(hub: Path) -> Path | None:
+    """The life project root: symlinks to its repos, universal skills only."""
+    root = hub.parent / "Life"
+    return root if root.is_dir() else None
+
+
 def hub_claude_text() -> str:
     return (
         "# faotools\n\n"
@@ -269,7 +275,9 @@ def project_links() -> dict[Path, Path]:
 
     add(hub / ".claude" / "skills", hub / "ai_rules" / ".claude" / "skills")
     add(hub / ".claude" / "skills", hub / "ai_rules_fao" / ".claude" / "skills")
-    add(hub / "life" / ".claude" / "skills", hub / "ai_rules" / ".claude" / "skills")
+    life = life_root(hub)
+    if life is not None:
+        add(life / ".claude" / "skills", hub / "ai_rules" / ".claude" / "skills")
     return links
 
 
@@ -325,7 +333,12 @@ def stale_skill_links(links: dict[Path, Path]) -> list[Path]:
     )
     keep = set(links)
     stale: list[Path] = []
-    for dest_dir in (hub / ".claude" / "skills", hub / "life" / ".claude" / "skills"):
+    # hub/life/.claude/skills held the life links before ~/Life; clear them there too.
+    dest_dirs = [hub / ".claude" / "skills", hub / "life" / ".claude" / "skills"]
+    life = life_root(hub)
+    if life is not None:
+        dest_dirs.append(life / ".claude" / "skills")
+    for dest_dir in dest_dirs:
         if not dest_dir.is_dir():
             continue
         for dest in dest_dir.iterdir():

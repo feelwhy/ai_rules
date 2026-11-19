@@ -117,6 +117,6 @@ subjects. Recovery took two extra MRs. This gate exists so that never repeats.
 ## Push variants
 
 - **ai_rules / ai_rules_fao**: push when the user asks to publish rules.
-- **tools / support / life / …**: push only when the user explicitly asks; prefer leaving working-tree deletions/edits for review when trimming rules.
+- **tools / support / …**: push only when the user explicitly asks; prefer leaving working-tree deletions/edits for review when trimming rules.
 - **febado**: follow febado push / MR rules (`febado-push-workflows`); never force-push shared branches unless explicitly requested.
 - Never `--no-verify` / skip hooks unless the user explicitly requests it.

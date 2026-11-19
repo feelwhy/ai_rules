@@ -15,7 +15,6 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | run odoo 17 / 18 | `env-up.sh demo17` / `demo18` (add `e` for enterprise) |
 | start / launch **the same** target again, restart it | `env-up.sh <that-target> --restart` **only** — see below |
 | run support / faotools.com locally | `env-up.sh support` |
-| run life | `env-up.sh life` |
 | switch serie / change version / switch branch to 18 | `faotools_env/local/env-serie.sh 18.0` — it prints the trees and does not check out (`ai_rules_fao` `01-hub-serie`). Then edit those trees |
 | pull changes | fast-forward the tree that is already on that branch with `--ff-only` (`ai_rules_fao` `01-hub-serie`). Do not `git checkout` |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |

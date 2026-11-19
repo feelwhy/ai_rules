@@ -324,7 +324,7 @@ Any of:
 - `git checkout` of a shared checkout (a launch does not do this)
 - `env-up` (`--fresh`, `-u`, `-i`, `--test`, restore, neutralize)
 - Febado stack start/recreate, or a restart of a target another chat is using
-- live MCP / production writes (faotools.com, master, life)
+- live MCP / production writes (faotools.com, master, any other live database)
 
 Read-only search does not need this gate.
 
@@ -449,7 +449,6 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | run odoo 17 / 18 | `env-up.sh demo17` / `demo18` (add `e` for enterprise) |
 | start / launch **the same** target again, restart it | `env-up.sh <that-target> --restart` **only** — see below |
 | run support / faotools.com locally | `env-up.sh support` |
-| run life | `env-up.sh life` |
 | switch serie / change version / switch branch to 18 | `faotools_env/local/env-serie.sh 18.0` — it prints the trees and does not check out (`ai_rules_fao` `01-hub-serie`). Then edit those trees |
 | pull changes | fast-forward the tree that is already on that branch with `--ff-only` (`ai_rules_fao` `01-hub-serie`). Do not `git checkout` |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
@@ -514,4 +513,5 @@ This rule applies only when Paseo tools are available to you (`list_profiles`, `
   1. Call `list_profiles` and read the notes. Never launch Оркестратор. The default is the full level. «эконом» in the message selects the notes that say «Экономный уровень». Use Deep challenger only when the user asks for it or the case is already stuck.
   2. `create_agent` has no profile argument. Copy `provider/model`, `settings.modeId`, `settings.thinkingOptionId`, and the profile `options` as `settings.features`.
   3. Start every message to the worker with `[Paseo worker: <profile name>]`.
-  4. One step, report the worker's result, then wait (`00-chunk-gate`). If the whole chain fails, say so and stop.
+  4. Wait for the worker in the same reply. Pass `notifyOnFinish: false` to `create_agent` and `send_agent_prompt`: the wait below delivers the result, and a late finish notice only triggers a second, empty reply. Right after `create_agent` or `send_agent_prompt`, run `paseo wait <id> --timeout 540` in the shell, with the shell tool's own timeout above that (Claude Code: `timeout: 600000`). It prints the worker's last reply. Still running → run it again. Several workers → wait for each one. Never end a reply with "started it, I'll report when it answers": the finish notice can land in a session that is already gone (2026-11-18, `acc1efbb`).
+  5. One step, report the worker's result, then wait for the user (`00-chunk-gate`). If the whole chain fails, say so and stop.
