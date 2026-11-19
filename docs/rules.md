@@ -259,13 +259,6 @@ Febado `:23069` bind-mounts the shared `febado` checkout. Switching that checkou
    only to **restore**, and say you are restoring).
 3. Do not hide it inside an unrelated MR.
 
-## Incident that caused this rule (2026-07-28)
-
-DATA-010 prep stashed/rebased in the shared worktree while
-`journey/§1-PUB-bidder-privacy` WIP (`_febado_public_bidder_label`, templates)
-was present. Public Current-bids names reappeared on the live local server without permission.
-That class of mistake must not recur.
-
 ## 04-plan-challenge
 
 _Challenge plans and task framing before large or ambiguous work_
