@@ -21,7 +21,7 @@ febado’s stricter policy.
 |-----------|------|------|-------|--------|
 | “commit”, “commit A”, “commit mode A” | **A** | no | not required | no review |
 | “commit A1” | **A1** | no | not required | **review first** |
-| “commit B”, “commit mode B”, “commit and push”, “push” | **B** | yes, **after** local tests | **local Docker, then fix** | **offer** a Cursor review before pushing |
+| “commit B”, “commit mode B”, “commit and push”, “push” | **B** | yes, **after** local tests | **local Docker, then fix** | **offer** a Paseo `Code review` before pushing |
 | “commit B1” | **B1** | yes, **after** local tests | **local Docker, then fix** | **review first** (no need to ask) |
 | “commit B2” | **B2** | yes, **after** local tests | **local Docker, then fix** | no review — push directly |
 
@@ -59,8 +59,7 @@ green, so I did not push,” and do not wait for the user to repeat the push.
 The only stop is a run that cannot start (Docker down, the command itself
 missing). Incident 2026-09-23: a Febado push stopped after a red `devel` run
 and reported that instead of fixing it.
-- **Review = Cursor review of the local changes** (Bugbot subagent; add a security review when the
- change touches auth, ACL, controllers, or secrets). Fix or report its findings **before** pushing.
+- **Review = a Paseo worker on the local diff.** Profile `Code review`. Profile `Экономный Code review` when the request says «эконом». Launch and wait as `40-paseo-orchestration`. When the change touches auth, ACL, controllers, or secrets, say that in the worker prompt. Fix or report its findings **before** pushing. The reviewer does not commit.
 - **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
  An explicit “with review” / “without review” in the request wins over the mode letter.
 - All modes: commit only paths belonging to this task (never-discard-WIP), keep the repo’s message

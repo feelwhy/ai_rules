@@ -666,7 +666,7 @@ febado’s stricter policy.
 |-----------|------|------|-------|--------|
 | “commit”, “commit A”, “commit mode A” | **A** | no | not required | no review |
 | “commit A1” | **A1** | no | not required | **review first** |
-| “commit B”, “commit mode B”, “commit and push”, “push” | **B** | yes, **after** local tests | **local Docker, then fix** | **offer** a Cursor review before pushing |
+| “commit B”, “commit mode B”, “commit and push”, “push” | **B** | yes, **after** local tests | **local Docker, then fix** | **offer** a Paseo `Code review` before pushing |
 | “commit B1” | **B1** | yes, **after** local tests | **local Docker, then fix** | **review first** (no need to ask) |
 | “commit B2” | **B2** | yes, **after** local tests | **local Docker, then fix** | no review — push directly |
 
@@ -704,8 +704,7 @@ green, so I did not push,” and do not wait for the user to repeat the push.
 The only stop is a run that cannot start (Docker down, the command itself
 missing). Incident 2026-09-23: a Febado push stopped after a red `devel` run
 and reported that instead of fixing it.
-- **Review = Cursor review of the local changes** (Bugbot subagent; add a security review when the
- change touches auth, ACL, controllers, or secrets). Fix or report its findings **before** pushing.
+- **Review = a Paseo worker on the local diff.** Profile `Code review`. Profile `Экономный Code review` when the request says «эконом». Launch and wait as `40-paseo-orchestration`. When the change touches auth, ACL, controllers, or secrets, say that in the worker prompt. Fix or report its findings **before** pushing. The reviewer does not commit.
 - **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
  An explicit “with review” / “without review” in the request wins over the mode letter.
 - All modes: commit only paths belonging to this task (never-discard-WIP), keep the repo’s message
@@ -4142,7 +4141,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | test febado module | febado `scripts/test.sh` (in-repo) |
 | commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
 | (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
-| commit A1 | local commit only, **with** a Cursor review first |
+| commit A1 | local commit only, **with** a Paseo `Code review` first (`16-commit-workflow`) |
 | commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
 | prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — skill `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). The live bans are `33-release-gates` |
