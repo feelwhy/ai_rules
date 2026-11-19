@@ -85,9 +85,10 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `20-migrate-v17-to-v18` | Port module 17 → 18 |
 | `21-migrate-v18-to-v19` | Port module 18 → 19 |
 | `22-migrate-v19-to-v20` | Port module 19 → 20 (via saas-19.4); living rule + `tools/check_migrate_v20.py` |
+| `40-paseo-run` | Paseo tools are available and this chat must launch a worker |
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, boundaries, local Docker, MCP, `17-translation-gates`). “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules_fao` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation **and live loader apply** on 19.0+; never skip unless the user explicitly says to). HTML in those fields must follow always-on `18-xml-translate-html`.
+When the Cursor workspace includes `ai_rules_fao`, follow its always-on map `00-repo-map`. “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules_fao` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release`. The live bans are `33-release-gates`. HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 
@@ -169,9 +170,7 @@ is enough). An option list without trade-offs is not a decision aid.
 Default: **summary + at most a few sentences**. A table or file list only when it
 **is** the deliverable.
 
-Chunk-gate reports: summary first, then the four required lines — not an essay
-under each heading. When a plan is in progress, add the numbered reprint with
-`You are here` (and any user-commanded `skipped` highlights).
+A chunk report and the `You are here` reprint are `00-chunk-gate` and `04-plan-challenge`. Do not write an essay under each heading.
 
 ## 7. Technical asks include the how
 
@@ -199,35 +198,13 @@ _All local Odoo runs in Docker — never host venv or odoo-bin_
 
 # Docker only
 
-Local Odoo **always** runs in Docker. Never start, suggest, or document a host Python venv, host `odoo-bin`, or host Postgres for app work.
+Local Odoo **always** runs in Docker. Never start, suggest, or document a host Python venv, host `odoo-bin`, `python -m odoo`, or host Postgres for app work.
 
-## Variants
+Commands are `30-command-vocabulary`. In a faOtools workspace the examples and the disk bans are `ai_rules_fao` `20-local-commands` and `20-local-docker`.
 
-### faOtools flat hub (`faotools_env/local/`)
+Febado follows its own in-repo Docker rules. Do not stop or recreate the long-lived `:23069` stack unless asked.
 
-```bash
-cd /home/feelwhy/Odoo/faotools_env
-./local/env-up.sh demo19          # community
-./local/env-up.sh demo19e         # enterprise
-./local/env-up.sh support         # faotools.com neutralized
-./local/env-shell.sh demo19       # odoo shell
-./local/env-shell.sh demo19 psql
-```
-
-Details: `faotools_env/local/README.md` and `ai_rules_fao` local-Docker rule.
-
-### Febado (Doodba / `febado-odoo`)
-
-- Stack via `febado/scripts/docker-dev.sh` and sibling `febado-odoo` compose (`PORT_PREFIX=23`).
-- `docker-dev.sh start` / `logs` open a visible Cursor tab (`febado Odoo logs`)
-  the same way faOtools `env-up.sh` does — do not pass `--no-logs` on a launch.
-- Follow febado in-repo rules (`odoo-local-docker.local.mdc`, telepresence, test scripts).
-- Do not stop/recreate the user’s long-lived `:23069` stack unless asked.
-
-### Shared bans
-
-- No `python -m odoo`, no `./odoo-bin`, no activating a project venv to “just run Odoo”.
-- One-off containers must be `--rm`. Prefer existing launch scripts over ad-hoc `docker run`.
+One-off containers must be `--rm`. Prefer existing launch scripts over ad-hoc `docker run`.
 
 ## 03-never-discard-wip
 
@@ -266,19 +243,14 @@ longer matches the worktree the user's server is reading.
    affected. Ask what to do. Do not stash, rebase, switch branch, or force a
    clean tree yourself.
 4. If foreign WIP blocks a switch: **stop and ask**. Do not check out the
-   shared hub to get past it. A faOtools launch mounts the serie tree, so
-   edit that tree — the worktree that has the branch checked out, usually
-   `_worktrees/<repo>-<branch>` — and leave the shared checkout where it is
-   (`ai_rules_fao` `01-hub-serie`). Febado `:23069` reads the shared `febado`
-   checkout, so that work stays in the shared checkout.
+   shared hub to get past it. Edit the tree that serie already mounts
+   (`ai_rules_fao` `01-hub-serie`).
 5. Committing *only your* paths on a new branch in the **shared** checkout is
    fine when that does not touch foreign files — never "clear the desk" first.
 
 ## Shared worktree + long-lived Docker Odoo
 
 Febado `:23069` bind-mounts the shared `febado` checkout. Switching that checkout changes what that server serves. Do not switch it to serve this chat. Do not switch away from a branch that holds **foreign** WIP the user may be browsing unless they ask. After any checkout the user asked for, warn if `:23069` may now be missing code that was visible a minute ago.
-
-faOtools `env-up` does not follow a checkout done for the launch. It mounts the shared checkout only when that checkout is already on the serie branch, otherwise the worktree that has the branch checked out, usually `_worktrees/<repo>-<branch>` (`ai_rules_fao` `01-hub-serie`). Edit that tree. Do not `git checkout` the hub so a demo sees your files.
 
 ## If you already disturbed foreign WIP
 
@@ -379,23 +351,9 @@ another serie, or data you did not query is a guess — do not deliver it as a f
 - **Version reality**: check the **active serie** (branch / env target) — an API that exists on 19.0
   may be gone or renamed on the serie in front of you.
 
-## Rules
+When a check is genuinely impossible (needs prod, the user's browser, a permission), say it is a hypothesis, name the check that would settle it, and ask. "Should be fine" / "probably" is not a report.
 
-1. **No unverified cause.** Before "the reason is X", confirm X. One concrete check beats three
-   paragraphs of reasoning.
-2. **No unverified fix.** Do not recommend an edit whose premise (this field exists, this hook
-   fires, this template is inherited) has not been looked up.
-3. **Label real hypotheses.** When a check is genuinely impossible (needs prod, the user's browser,
-   a permission), say it is a hypothesis, name the check that would settle it, and ask — never
-   promote it to a conclusion.
-4. **Cite the evidence** in the reply: `path:line`, the command run, the query result, the log line,
-   the test outcome. "Should be fine" / "probably" is not a report.
-5. **Don't stack on an unverified premise.** If step 1 is a guess, stop and check it before building
-   steps 2-5 on top of it.
-6. **When the user reports a bug**, inspect or reproduce before proposing a fix; a fix for the wrong
-   cause costs more than the check would have.
-7. **A user's premise is checkable too.** If the code contradicts what the request assumes, say so
-   with the evidence instead of implementing on the wrong assumption.
+If the code contradicts what the request assumes, say so with the evidence instead of implementing on the wrong assumption.
 
 ## 07-parallel-sessions
 
@@ -460,13 +418,9 @@ another chat is testing is not — ask.
 
 ## Branches: do not spoil the other chat
 
-faOtools `env-up` mounts the serie tree. It does not `git checkout` the shared hub. Launching 19 while `tools` is on 18.0 is normal. Edit the tree `env-serie.sh` prints for that serie.
+A faOtools launch of another serie does not require a checkout. Do not `git checkout` a shared repo so a demo matches this chat, and do not move the shared checkout out from under another chat's WIP. Febado `:23069` is `03-never-discard-wip`.
 
-Febado `:23069` still bind-mounts the shared `febado` checkout. Do not switch that checkout to serve this chat.
-
-- Do **not** `git checkout` a shared repo so a demo matches this chat (`03-never-discard-wip`, `ai_rules_fao` `01-hub-serie`).
-- Do **not** move the shared checkout out from under another chat's WIP.
-- After any checkout the user explicitly asked for, say which chats and running containers now see different code.
+After any checkout the user explicitly asked for, say which chats and running containers now see different code.
 
 ## If you would collide
 
@@ -4245,9 +4199,18 @@ This rule applies only when Paseo tools are available to you (`list_profiles`, `
 
 - The message starts with `[Paseo worker: <role>]` — you are that worker. Do the role. Never launch agents. A limit or a missing model is the chain's job.
 - The message starts with «сам:» — do the task in this chat without delegating. The prefix is not part of the task.
-- Otherwise you are the orchestrator. Delegate the work; do not do it yourself.
-  1. Call `list_profiles` and read the notes. Never launch Оркестратор. The default is the full level. «эконом» in the message selects the notes that say «Экономный уровень». Use Deep challenger only when the user asks for it or the case is already stuck.
-  2. `create_agent` has no profile argument. Copy `provider/model`, `settings.modeId`, `settings.thinkingOptionId`, and the profile `options` as `settings.features`.
-  3. Start every message to the worker with `[Paseo worker: <profile name>]`.
-  4. Wait for the worker in the same reply. Pass `notifyOnFinish: false` to `create_agent` and `send_agent_prompt`: the wait below delivers the result, and a late finish notice only triggers a second, empty reply. Right after `create_agent` or `send_agent_prompt`, run `paseo wait <id> --timeout 540` in the shell, with the shell tool's own timeout above that (Claude Code: `timeout: 600000`). It prints the worker's last reply. Still running → run it again. Several workers → wait for each one. Never end a reply with "started it, I'll report when it answers": the finish notice can land in a session that is already gone (2026-11-18, `acc1efbb`).
-  5. One step, report the worker's result, then wait for the user (`00-chunk-gate`). If the whole chain fails, say so and stop.
+- Otherwise you are the orchestrator. Do not do the work yourself. Never launch Оркестратор. Never end a reply with "started it, I'll report when it answers": the finish notice can land in a session that is already gone (2026-11-18, `acc1efbb`). Profile notes, `create_agent` fields, and the wait are the skill `40-paseo-run`. Pull it before `create_agent`.
+
+## 40-paseo-run
+
+_How to launch a Paseo worker and wait for it. Read before create_agent when Paseo tools are available_
+
+# Paseo worker launch
+
+The decisions are always-on in `40-paseo-orchestration`. This skill is the launch.
+
+1. Call `list_profiles` and read the notes. Never launch Оркестратор. The default is the full level. «эконом» in the message selects the notes that say «Экономный уровень». Use Deep challenger only when the user asks for it or the case is already stuck.
+2. `create_agent` has no profile argument. Copy `provider/model`, `settings.modeId`, `settings.thinkingOptionId`, and the profile `options` as `settings.features`.
+3. Start every message to the worker with `[Paseo worker: <profile name>]`.
+4. Wait for the worker in the same reply. Pass `notifyOnFinish: false` to `create_agent` and `send_agent_prompt`: the wait below delivers the result, and a late finish notice only triggers a second, empty reply. Right after `create_agent` or `send_agent_prompt`, run `paseo wait <id> --timeout 540` in the shell, with the shell tool's own timeout above that (Claude Code: `timeout: 600000`). It prints the worker's last reply. Still running → run it again. Several workers → wait for each one. Never end a reply with "started it, I'll report when it answers".
+5. One step, report the worker's result, then wait for the user (`00-chunk-gate`). If the whole chain fails, say so and stop.

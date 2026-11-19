@@ -76,9 +76,7 @@ is enough). An option list without trade-offs is not a decision aid.
 Default: **summary + at most a few sentences**. A table or file list only when it
 **is** the deliverable.
 
-Chunk-gate reports: summary first, then the four required lines — not an essay
-under each heading. When a plan is in progress, add the numbered reprint with
-`You are here` (and any user-commanded `skipped` highlights).
+A chunk report and the `You are here` reprint are `00-chunk-gate` and `04-plan-challenge`. Do not write an essay under each heading.
 
 ## 7. Technical asks include the how
 

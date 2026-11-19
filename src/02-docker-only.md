@@ -6,32 +6,10 @@ apply: always
 
 # Docker only
 
-Local Odoo **always** runs in Docker. Never start, suggest, or document a host Python venv, host `odoo-bin`, or host Postgres for app work.
+Local Odoo **always** runs in Docker. Never start, suggest, or document a host Python venv, host `odoo-bin`, `python -m odoo`, or host Postgres for app work.
 
-## Variants
+Commands are `30-command-vocabulary`. In a faOtools workspace the examples and the disk bans are `ai_rules_fao` `20-local-commands` and `20-local-docker`.
 
-### faOtools flat hub (`faotools_env/local/`)
+Febado follows its own in-repo Docker rules. Do not stop or recreate the long-lived `:23069` stack unless asked.
 
-```bash
-cd /home/feelwhy/Odoo/faotools_env
-./local/env-up.sh demo19          # community
-./local/env-up.sh demo19e         # enterprise
-./local/env-up.sh support         # faotools.com neutralized
-./local/env-shell.sh demo19       # odoo shell
-./local/env-shell.sh demo19 psql
-```
-
-Details: `faotools_env/local/README.md` and `ai_rules_fao` local-Docker rule.
-
-### Febado (Doodba / `febado-odoo`)
-
-- Stack via `febado/scripts/docker-dev.sh` and sibling `febado-odoo` compose (`PORT_PREFIX=23`).
-- `docker-dev.sh start` / `logs` open a visible Cursor tab (`febado Odoo logs`)
-  the same way faOtools `env-up.sh` does — do not pass `--no-logs` on a launch.
-- Follow febado in-repo rules (`odoo-local-docker.local.mdc`, telepresence, test scripts).
-- Do not stop/recreate the user’s long-lived `:23069` stack unless asked.
-
-### Shared bans
-
-- No `python -m odoo`, no `./odoo-bin`, no activating a project venv to “just run Odoo”.
-- One-off containers must be `--rm`. Prefer existing launch scripts over ad-hoc `docker run`.
+One-off containers must be `--rm`. Prefer existing launch scripts over ad-hoc `docker run`.

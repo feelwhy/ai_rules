@@ -36,19 +36,14 @@ longer matches the worktree the user's server is reading.
    affected. Ask what to do. Do not stash, rebase, switch branch, or force a
    clean tree yourself.
 4. If foreign WIP blocks a switch: **stop and ask**. Do not check out the
-   shared hub to get past it. A faOtools launch mounts the serie tree, so
-   edit that tree — the worktree that has the branch checked out, usually
-   `_worktrees/<repo>-<branch>` — and leave the shared checkout where it is
-   (`ai_rules_fao` `01-hub-serie`). Febado `:23069` reads the shared `febado`
-   checkout, so that work stays in the shared checkout.
+   shared hub to get past it. Edit the tree that serie already mounts
+   (`ai_rules_fao` `01-hub-serie`).
 5. Committing *only your* paths on a new branch in the **shared** checkout is
    fine when that does not touch foreign files — never "clear the desk" first.
 
 ## Shared worktree + long-lived Docker Odoo
 
 Febado `:23069` bind-mounts the shared `febado` checkout. Switching that checkout changes what that server serves. Do not switch it to serve this chat. Do not switch away from a branch that holds **foreign** WIP the user may be browsing unless they ask. After any checkout the user asked for, warn if `:23069` may now be missing code that was visible a minute ago.
-
-faOtools `env-up` does not follow a checkout done for the launch. It mounts the shared checkout only when that checkout is already on the serie branch, otherwise the worktree that has the branch checked out, usually `_worktrees/<repo>-<branch>` (`ai_rules_fao` `01-hub-serie`). Edit that tree. Do not `git checkout` the hub so a demo sees your files.
 
 ## If you already disturbed foreign WIP
 

@@ -40,9 +40,10 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `20-migrate-v17-to-v18` | Port module 17 → 18 |
 | `21-migrate-v18-to-v19` | Port module 18 → 19 |
 | `22-migrate-v19-to-v20` | Port module 19 → 20 (via saas-19.4); living rule + `tools/check_migrate_v20.py` |
+| `40-paseo-run` | Paseo tools are available and this chat must launch a worker |
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, also follow its always-on map (`00-repo-map`, boundaries, local Docker, MCP, `17-translation-gates`). “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules_fao` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release` (step 8 is TM-first changelog translation **and live loader apply** on 19.0+; never skip unless the user explicitly says to). HTML in those fields must follow always-on `18-xml-translate-html`.
+When the Cursor workspace includes `ai_rules_fao`, follow its always-on map `00-repo-map`. “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules_fao` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release`. The live bans are `33-release-gates`. HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 

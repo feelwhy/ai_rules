@@ -63,13 +63,9 @@ another chat is testing is not — ask.
 
 ## Branches: do not spoil the other chat
 
-faOtools `env-up` mounts the serie tree. It does not `git checkout` the shared hub. Launching 19 while `tools` is on 18.0 is normal. Edit the tree `env-serie.sh` prints for that serie.
+A faOtools launch of another serie does not require a checkout. Do not `git checkout` a shared repo so a demo matches this chat, and do not move the shared checkout out from under another chat's WIP. Febado `:23069` is `03-never-discard-wip`.
 
-Febado `:23069` still bind-mounts the shared `febado` checkout. Do not switch that checkout to serve this chat.
-
-- Do **not** `git checkout` a shared repo so a demo matches this chat (`03-never-discard-wip`, `ai_rules_fao` `01-hub-serie`).
-- Do **not** move the shared checkout out from under another chat's WIP.
-- After any checkout the user explicitly asked for, say which chats and running containers now see different code.
+After any checkout the user explicitly asked for, say which chats and running containers now see different code.
 
 ## If you would collide
 
