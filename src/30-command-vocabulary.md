@@ -23,7 +23,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | sync images/dbs | `faotools_env/local/env-sync.sh` (downloads **and** restores + neutralizes) |
 | is \<target\> ready to launch? | `faotools_env/local/env-prepare.sh --check` |
 | stop \<target\> / stop everything | `env-down.sh <target>` / `env-down.sh` (all targets; add `--remove` for a teardown with its volume) |
-| clean up / free space / WSL is too big | `env-gc.sh` (dry run) → report → `env-gc.sh --apply`; then point the user to `local/windows/compact-wsl-disks.ps1` (elevated PowerShell, shuts WSL down) |
+| clean up / free space | `env-gc.sh` (dry run) → report → `env-gc.sh --apply` |
 | keep this review DB / drop it | `env-review.sh keep <db> --hours N` / `env-review.sh down <db>` |
 | launch / start febado | febado `scripts/docker-dev.sh start` (no `--no-logs`) + febado local Docker rules — not `env-up`. Same Cursor log tab as faOtools (`febado Odoo logs`) |
 | test febado module | febado `scripts/test.sh` (in-repo) |
