@@ -156,14 +156,22 @@ local commit — do not ask.
 
 ## 5. When offering options
 
-Any time the user is given a choice — in reply text **or** a multiple-choice
-question form — every option carries its **pros and cons** (one short line each
-is enough). An option list without trade-offs is not a decision aid.
+An owner decision is asked through the interactive question form (Claude Code
+`AskUserQuestion`, or the host's equivalent), never as a numbered list in reply
+text.
 
-- In a form, put the pros/cons in the option label or the question prompt so
-  they are visible at pick time.
-- Still recommend one option and say why in one sentence.
-- Options nobody should pick are left out, not listed with empty cons.
+Up to four questions per form. Split dependent questions into a later form.
+
+The question prompt first says in plain words what the decision is about: what
+the thing is, and where any number in it comes from (e.g. who set a limit).
+
+- Every option carries its pros and cons in its description, visible at pick time.
+- One option is marked recommended, with a one-sentence reason.
+- Options nobody should pick are left out.
+- Plain text options only when the host has no form. Then the same content, as a short list.
+
+A yes/no "proceed with the next chunk?" is not a decision with options. Ask it
+in reply text (`00-chunk-gate`).
 
 ## 6. Length
 
