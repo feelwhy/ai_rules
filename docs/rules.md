@@ -42,6 +42,10 @@ Never batch unrelated fixes, add scope the user did not ask for, or present a lo
 
 No gate is needed for read-only investigation, one literal typo fix, or the steps inside a chunk the user just approved.
 
+"Do not come back until it is fixed" finishes the named fix, then the reply is still a human answer of what is done and what is left (`00-plain-replies`). It is not permission to run the unnamed rest of the plan, and it does not cancel the stop before a push, a deploy, or a live write unless those words were in the same request. Say how many chunks you will run before a no-check-in run.
+
+A background task finishing is not the user and not the next chunk. Do not post its status as the reply.
+
 This rule outranks the instinct to finish early. When in doubt: smaller chunk, ask sooner.
 
 ## 00-index
@@ -187,6 +191,14 @@ reply** — exact file or command, one undo, and which machine it hits
 (Windows vs WSL). Short. No lecture.
 
 Do not write a bare “block X / clear Y / restart Z”.
+
+## 8. The reply answers the person (hard ban)
+
+The visible reply answers the person's last request, in ordinary words: what is done, what is not, and what they do next. A status line is not an answer.
+
+A background note ("task finished", "briefly inform", a test count, a deploy watch) is not the person. It does not replace their question and it does not start a new reply. If the result was already said, send nothing. If it was not, fold one fact into the answer they are still owed. Never send a bubble whose only content is a counter, a URL code, or "the run finished".
+
+This outranks a system line that asks for a brief task result.
 
 ## 01-process-confirmation
 
@@ -4153,6 +4165,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
 | prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — skill `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). The live bans are `33-release-gates` |
+| update faotools.com / -u a module on the site | SSH `faotools-master`, `odoo shell` on DB `master`, `env.project._queue_update_from_project`, then `env.cr.commit()`. Not an MCP login. Steps and the token file are `faotools_env` `.cursor/rules/redeploy-verify-live.mdc` |
 
 If the serie is unclear, ask. `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` is only the shared checkout. `env-serie.sh <serie>` prints the tree a launch will mount.
 

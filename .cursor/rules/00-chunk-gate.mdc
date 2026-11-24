@@ -39,4 +39,8 @@ Never batch unrelated fixes, add scope the user did not ask for, or present a lo
 
 No gate is needed for read-only investigation, one literal typo fix, or the steps inside a chunk the user just approved.
 
+"Do not come back until it is fixed" finishes the named fix, then the reply is still a human answer of what is done and what is left (`00-plain-replies`). It is not permission to run the unnamed rest of the plan, and it does not cancel the stop before a push, a deploy, or a live write unless those words were in the same request. Say how many chunks you will run before a no-check-in run.
+
+A background task finishing is not the user and not the next chunk. Do not post its status as the reply.
+
 This rule outranks the instinct to finish early. When in doubt: smaller chunk, ask sooner.
