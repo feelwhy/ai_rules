@@ -724,7 +724,7 @@ green, so I did not push,” and do not wait for the user to repeat the push.
 The only stop is a run that cannot start (Docker down, the command itself
 missing). Incident 2026-09-23: a Febado push stopped after a red `devel` run
 and reported that instead of fixing it.
-- **Review = a Paseo worker on the local diff.** Profile `Code review`. Profile `Экономный Code review` when the request says «эконом». Launch and wait as `40-paseo-orchestration`. When the change touches auth, ACL, controllers, or secrets, say that in the worker prompt. Fix or report its findings **before** pushing. The reviewer does not commit.
+- **Review = a Paseo worker on the local diff.** Profile `Code review`. Launch and wait as `40-paseo-orchestration`. When the change touches auth, ACL, controllers, or secrets, say that in the worker prompt. Fix or report its findings **before** pushing. The reviewer does not commit.
 - **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
  An explicit “with review” / “without review” in the request wins over the mode letter.
 - All modes: commit only paths belonging to this task (never-discard-WIP), keep the repo’s message
@@ -4210,7 +4210,7 @@ _Paseo — the top chat delegates to a profile; a marked worker does its role_
 
 This rule applies only when Paseo tools are available to you (`list_profiles`, `create_agent`; in Claude Code `mcp__paseo__list_profiles`). Without them, skip this rule.
 
-- The message starts with `[Paseo worker: <role>]` — you are that worker. Do the role. Never launch agents. A limit or a missing model is the chain's job.
+- The message starts with `[Paseo worker: <role>]` — you are that worker. Do the role. Never launch agents. A limit or a missing model: report it and stop. Do not switch models yourself.
 - The message starts with «сам:» — do the task in this chat without delegating. The prefix is not part of the task.
 - Otherwise you are the orchestrator. Do not do the work yourself. Never launch Оркестратор. Never end a reply with "started it, I'll report when it answers": the finish notice can land in a session that is already gone (2026-11-18, `acc1efbb`). Profile notes, `create_agent` fields, and the wait are the skill `40-paseo-run`. Pull it before `create_agent`.
 
@@ -4222,8 +4222,8 @@ _How to launch a Paseo worker and wait for it. Read before create_agent when Pas
 
 The decisions are always-on in `40-paseo-orchestration`. This skill is the launch.
 
-1. Call `list_profiles` and read the notes. Never launch Оркестратор. The default is the full level. «эконом» in the message selects the notes that say «Экономный уровень». Use Deep challenger only when the user asks for it or the case is already stuck.
+1. Call `list_profiles` and read the notes. Never launch Оркестратор. Every translation (module `.po`, the site, descriptions, releases) goes to Переводчик unless the user names another profile.
 2. `create_agent` has no profile argument. Copy `provider/model`, `settings.modeId`, `settings.thinkingOptionId`, and the profile `options` as `settings.features`.
 3. Start every message to the worker with `[Paseo worker: <profile name>]`.
 4. Wait for the worker in the same reply. Pass `notifyOnFinish: false` to `create_agent` and `send_agent_prompt`: the wait below delivers the result, and a late finish notice only triggers a second, empty reply. Right after `create_agent` or `send_agent_prompt`, run `paseo wait <id> --timeout 540` in the shell, with the shell tool's own timeout above that (Claude Code: `timeout: 600000`). It prints the worker's last reply. Still running → run it again. Several workers → wait for each one. Never end a reply with "started it, I'll report when it answers".
-5. One step, report the worker's result, then wait for the user (`00-chunk-gate`). If the whole chain fails, say so and stop.
+5. One step, report the worker's result, then wait for the user (`00-chunk-gate`). If the worker fails (a limit, a missing model), say so and stop. Do not move its task to another profile yourself.

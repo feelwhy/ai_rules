@@ -8,8 +8,8 @@ apply: agent
 
 The decisions are always-on in `40-paseo-orchestration`. This skill is the launch.
 
-1. Call `list_profiles` and read the notes. Never launch Оркестратор. The default is the full level. «эконом» in the message selects the notes that say «Экономный уровень». Use Deep challenger only when the user asks for it or the case is already stuck.
+1. Call `list_profiles` and read the notes. Never launch Оркестратор. Every translation (module `.po`, the site, descriptions, releases) goes to Переводчик unless the user names another profile.
 2. `create_agent` has no profile argument. Copy `provider/model`, `settings.modeId`, `settings.thinkingOptionId`, and the profile `options` as `settings.features`.
 3. Start every message to the worker with `[Paseo worker: <profile name>]`.
 4. Wait for the worker in the same reply. Pass `notifyOnFinish: false` to `create_agent` and `send_agent_prompt`: the wait below delivers the result, and a late finish notice only triggers a second, empty reply. Right after `create_agent` or `send_agent_prompt`, run `paseo wait <id> --timeout 540` in the shell, with the shell tool's own timeout above that (Claude Code: `timeout: 600000`). It prints the worker's last reply. Still running → run it again. Several workers → wait for each one. Never end a reply with "started it, I'll report when it answers".
-5. One step, report the worker's result, then wait for the user (`00-chunk-gate`). If the whole chain fails, say so and stop.
+5. One step, report the worker's result, then wait for the user (`00-chunk-gate`). If the worker fails (a limit, a missing model), say so and stop. Do not move its task to another profile yourself.

@@ -59,7 +59,7 @@ green, so I did not push,” and do not wait for the user to repeat the push.
 The only stop is a run that cannot start (Docker down, the command itself
 missing). Incident 2026-09-23: a Febado push stopped after a red `devel` run
 and reported that instead of fixing it.
-- **Review = a Paseo worker on the local diff.** Profile `Code review`. Profile `Экономный Code review` when the request says «эконом». Launch and wait as `40-paseo-orchestration`. When the change touches auth, ACL, controllers, or secrets, say that in the worker prompt. Fix or report its findings **before** pushing. The reviewer does not commit.
+- **Review = a Paseo worker on the local diff.** Profile `Code review`. Launch and wait as `40-paseo-orchestration`. When the change touches auth, ACL, controllers, or secrets, say that in the worker prompt. Fix or report its findings **before** pushing. The reviewer does not commit.
 - **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
  An explicit “with review” / “without review” in the request wins over the mode letter.
 - All modes: commit only paths belonging to this task (never-discard-WIP), keep the repo’s message
