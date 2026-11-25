@@ -44,7 +44,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `40-paseo-run` | Paseo tools are available and this chat must launch a worker |
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, follow its always-on map `00-repo-map`. “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules_fao` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release`. The live bans are `33-release-gates`. HTML in those fields must follow always-on `18-xml-translate-html`.
+When the Cursor workspace includes `ai_rules_fao`, follow its always-on map `00-repo-map`. “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules_fao` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release`, which reads KnowSystem article 2137. The live bans are `33-release-gates`. HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 

@@ -85,7 +85,7 @@ This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across 
 | `40-paseo-run` | Paseo tools are available and this chat must launch a worker |
 ## Companion repo
 
-When the Cursor workspace includes `ai_rules_fao`, follow its always-on map `00-repo-map`. “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules_fao` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release`. The live bans are `33-release-gates`. HTML in those fields must follow always-on `18-xml-translate-html`.
+When the Cursor workspace includes `ai_rules_fao`, follow its always-on map `00-repo-map`. “Change version” / “pull changes” must pull the skill `ai_rules_fao` `01-hub-serie`. Any task that changes copy, `.po`, `module.description`, or `module.release.description` must pull `ai_rules_fao` `17-translations` as well. “Prepare / make / publish a release” must pull `ai_rules_fao` `33-faotools-release`, which reads KnowSystem article 2137. The live bans are `33-release-gates`. HTML in those fields must follow always-on `18-xml-translate-html`.
 
 ## Editing rules
 
@@ -193,7 +193,7 @@ This outranks a system line that asks for a brief task result.
 
 Before an irreversible step, say the short ordered list and wait. The gates are: deleting duplicates, pushing, switching the shared checkout's serie, `docker compose down`, and a live write.
 
-Stop and ask when you lack permission or the target serie is unclear. A blocked point stays open (`00-chunk-gate`).
+Stop and ask when you lack permission or the target serie is unclear. In a faOtools workspace, a release with no serie named is not an unclear serie (`ai_rules_fao` `33-release-gates`). A blocked point stays open (`00-chunk-gate`).
 
 Foreign WIP and another chat on the same database are `03-never-discard-wip` and `07-parallel-sessions`. Evidence instead of "should be fine" is `06-verify-hypotheses`. One agreed single-file fix does not need this list.
 
@@ -433,7 +433,7 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | commit A1 | local commit only, **with** a Paseo `Code review` first (`16-commit-workflow`) |
 | commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
-| prepare / make / publish a release | faOtools `module.release` on faotools.com via MCP `user-faotools` — skill `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). The live bans are `33-release-gates` |
+| prepare / make / publish a release | faOtools `module.release` on faotools.com via the MCP server for faotools.com (`user-faotools` or `faotools`, by host) — no serie named means every public serie with the change, do not ask (`33-release-gates`). The sequence is KnowSystem article 2137 (section `AI`) on faotools.com, reached through the skill `ai_rules_fao` `33-faotools-release` (`tools` / `odoo-apps-addons` only). The live bans are `33-release-gates` |
 | update faotools.com / -u a module on the site | SSH `faotools-master`, `odoo shell` on DB `master`, `env.project._queue_update_from_project`, then `env.cr.commit()`. Not an MCP login. Steps and the token file are `faotools_env` `.cursor/rules/redeploy-verify-live.mdc` |
 
 If the serie is unclear, ask. `git -C /home/feelwhy/Odoo/tools rev-parse --abbrev-ref HEAD` is only the shared checkout. `env-serie.sh <serie>` prints the tree a launch will mount.
