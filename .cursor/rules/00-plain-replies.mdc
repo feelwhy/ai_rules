@@ -65,7 +65,9 @@ An owner decision is asked through the interactive question form (Claude Code
 `AskUserQuestion`, or the host's equivalent), never as a numbered list in reply
 text.
 
-Up to four questions per form. Split dependent questions into a later form.
+Ask as many questions as it takes to clear every doubt. There is no cap. An open
+doubt left unasked is the failure, a long form is not. When the host form holds
+fewer questions than needed, send the next form right after the answers.
 
 The question prompt first says in plain words what the decision is about: what
 the thing is, and where any number in it comes from (e.g. who set a limit).

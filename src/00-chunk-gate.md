@@ -22,7 +22,7 @@ Silence is not confirmation. Deliver the plan as numbered chunks with a check ea
 
 Follow the numbered plan. If it is wrong, change the list (say what changed and why), then follow the new list. Do not invent a second plan. A point is done only after its check passed. "I started it" is not done. Never mark it done in a todo, a reprint, or an automatic plan update. Skip a point only when the user explicitly said to skip it. A blocked point stays open. Review findings the plan said would be fixed belong in the current point.
 
-While implementing, keep the original numbers visible, with `You are here` on the current point (`00-plain-replies`). The reprint example and the skipped-point last step are `04-plan-challenge`.
+While implementing, keep the original numbers visible, with `You are here` on the current point and every open point shown in full, never collapsed (`00-plain-replies`). The reprint example and the skipped-point last step are `04-plan-challenge`.
 
 Stop the turn immediately on any of these:
 

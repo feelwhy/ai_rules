@@ -27,7 +27,7 @@ Before a large implementation or when a plan looks thin:
   check passed — all cases, including automatic plan updates. Never miss a point
   without an explicit user command. Last step is always: consider skipped points (below).
 
-While implementing, reprint the numbered plan every turn with `You are here` on the current point. Keep the original numbers:
+While implementing, reprint the numbered plan every turn with `You are here` on the current point. Keep the original numbers. Show every point that is not done, each on its own line with its text. Do not hide, drop, or collapse open points ("3–7 remaining", "…", "and the rest"):
 
 ```
 1. Add field X — done
