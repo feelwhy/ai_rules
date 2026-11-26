@@ -17,7 +17,7 @@ Every reply **opens** with a short human-readable summary: **1–3 sentences**.
 
 - A non-specialist can act on it (yes/no, the fact, the URL, what to do next).
 - Ordinary words. No file dumps, no symbol lists, no “I checked…”.
-- Then **stop**, unless one proof line or one next question is required.
+- Then **stop**, unless one proof line or the open questions (§5) are required.
 
 ```
 Bad:  I reviewed the loader, the TM apply path, and the QWeb wrapper. The
@@ -67,7 +67,7 @@ An owner decision is asked through the interactive question form (Claude Code
 text.
 
 Ask as many questions as it takes to clear every doubt. There is no cap. An open
-doubt left unasked is the failure, a long form is not. When the host form holds
+doubt left unasked is the failure. A long form is not. When the host form holds
 fewer questions than needed, send the next form right after the answers.
 
 The question prompt first says in plain words what the decision is about: what

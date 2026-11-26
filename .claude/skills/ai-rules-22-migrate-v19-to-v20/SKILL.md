@@ -1216,7 +1216,7 @@ Anything that **reads** `message.tracking_value_ids` therefore raises on 20.0. I
 `odoo-apps-addons/ai_mcp_server` — `services/tool_service.py:1256` and
 `services/catalog_service.py:245` both iterate `msg.sudo().tracking_value_ids` to format chatter
 payloads, and `tests/test_mcp_models.py` creates `mail.tracking.value` rows. That module is outside
-the `tools` group list, so no group gate covers it; schedule it explicitly.
+the `tools` group list, so no group gate covers it. It is not ours to port: hand its developer the task (`ai_rules_fao` `02-repo-boundaries`).
 
 `mail.tracking.duration.mixin` **survives in name only** — do not read that as "stage-duration
 features still work". The 19.0 implementation was replaced (94 lines deleted, 29 added) and

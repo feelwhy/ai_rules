@@ -21,7 +21,7 @@ Silence is not confirmation. Deliver the plan as numbered chunks with a check ea
 
 Follow the numbered plan. If it is wrong, change the list (say what changed and why), then follow the new list. Do not invent a second plan. A point is done only after its check passed. "I started it" is not done. Never mark it done in a todo, a reprint, or an automatic plan update. Skip a point only when the user explicitly said to skip it. A blocked point stays open. Review findings the plan said would be fixed belong in the current point.
 
-While implementing, keep the original numbers visible, with `You are here` on the current point and every open point shown in full, never collapsed (`00-plain-replies`). The reprint example and the skipped-point last step are `04-plan-challenge`.
+While implementing, keep the original numbers visible, with `You are here` on the current point (`00-plain-replies`) and every open point shown in full, never collapsed. The reprint example and the skipped-point last step are `04-plan-challenge`.
 
 Stop the turn immediately on any of these:
 
@@ -104,7 +104,7 @@ Every reply **opens** with a short human-readable summary: **1–3 sentences**.
 
 - A non-specialist can act on it (yes/no, the fact, the URL, what to do next).
 - Ordinary words. No file dumps, no symbol lists, no “I checked…”.
-- Then **stop**, unless one proof line or one next question is required.
+- Then **stop**, unless one proof line or the open questions (§5) are required.
 
 ```
 Bad:  I reviewed the loader, the TM apply path, and the QWeb wrapper. The
@@ -154,7 +154,7 @@ An owner decision is asked through the interactive question form (Claude Code
 text.
 
 Ask as many questions as it takes to clear every doubt. There is no cap. An open
-doubt left unasked is the failure, a long form is not. When the host form holds
+doubt left unasked is the failure. A long form is not. When the host form holds
 fewer questions than needed, send the next form right after the answers.
 
 The question prompt first says in plain words what the decision is about: what
