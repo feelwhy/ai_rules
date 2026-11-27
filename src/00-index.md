@@ -6,7 +6,7 @@ apply: always
 
 # AI rules index
 
-This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across faOtools and Febado workspaces. faOtools-specific rules live in sibling `ai_rules_fao`.
+This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across faOtools workspaces. faOtools-specific rules live in sibling `ai_rules_fao`.
 
 ## Always-on (read every turn)
 

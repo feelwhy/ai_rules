@@ -11,12 +11,6 @@ apply: agent
 The **letters are universal**; the routing and the gates behind them belong to the project. The table
 below is the **faOtools hub** mapping.
 
-**febado already owns its own A/B definition** (`febado-push-workflows.local.mdc`) and it is *not*
-this one — there, Mode A (local commit) is the default even for “push this workflow / push WF-…”, and
-Mode B means a **section-scoped MR**, not a bare `git push`. In febado, always route the phrase and
-the test/review gates through febado’s rule; never apply the hub row below to it, and never relax
-febado’s stricter policy.
-
 | User says | Mode | Push | Tests | Review |
 |-----------|------|------|-------|--------|
 | “commit”, “commit A”, “commit mode A” | **A** | no | not required | no review |
@@ -39,8 +33,7 @@ stop after tests to ask “proceed with the MR?”, and do not skip tests to fin
 push.
 
 1. **Run** the relevant tests **locally in Docker** for every changed module
-   (`env-up.sh demo<N>[e] --test <module>`, `support/devops/run_tests.sh`,
-   febado `scripts/test.sh`).
+   (`env-up.sh demo<N>[e] --test <module>`, `support/devops/run_tests.sh`).
 2. **Check** the real output in this chat (command + pass/fail).
 3. **Fix** failures and **re-run the same local command** until green. Un-runnable →
    stop and ask. Do not push.
@@ -48,17 +41,16 @@ push.
 
 **GitLab CI is not step 1.** Watching a pipeline does not replace the local run.
 **No local test command output in this chat → no `git push`, no MR, no MWPS.**
-Speed, chunk-gate, `:23069` going into test mode, “CI will catch it”, or “Mode A
-already committed” are not exceptions. After `test.sh`, restart the Febado stack
-if the user still needs the browser.
+Speed, chunk-gate, “CI will catch it”, or “Mode A already committed” are not
+exceptions.
 
 **A red log is not a stop.** The user already asked for the push. Read each
 failure, fix it, and re-run the same local command until it is green, then
 review and push in that same task. Do not end the turn with “tests were not
 green, so I did not push,” and do not wait for the user to repeat the push.
 The only stop is a run that cannot start (Docker down, the command itself
-missing). Incident 2026-09-23: a Febado push stopped after a red `devel` run
-and reported that instead of fixing it.
+missing). Incident 2026-09-23: a push stopped after a red test run and
+reported that instead of fixing it.
 - **Review = a Paseo worker on the local diff.** Profile `Code review`. Launch and wait as `40-paseo-orchestration`. When the change touches auth, ACL, controllers, or secrets, say that in the worker prompt. Fix or report its findings **before** pushing. The reviewer does not commit.
 - **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
  An explicit “with review” / “without review” in the request wins over the mode letter.
@@ -93,8 +85,8 @@ Staying silent about undelivered work is a failure, not a tidy scope.
 6. When the user says “push” and unshipped work plausibly belongs to it, default to **including**
  it and say what you included. Only clearly unrelated work may be left behind — with a warning.
 
-Incident (2026-08-18): six walked febado workflows plus a finished local-Docker script change had
-sat undelivered for weeks because walk notes called them “local-only” and the check compared commit
+Incident (2026-08-18): six finished workflows plus a local-Docker script change had
+sat undelivered for weeks because notes called them “local-only” and the check compared commit
 subjects. Recovery took two extra MRs. This gate exists so that never repeats.
 
 ## Before committing
@@ -116,5 +108,4 @@ subjects. Recovery took two extra MRs. This gate exists so that never repeats.
 
 - **ai_rules / ai_rules_fao**: push when the user asks to publish rules.
 - **tools / support / …**: push only when the user explicitly asks; prefer leaving working-tree deletions/edits for review when trimming rules.
-- **febado**: follow febado push / MR rules (`febado-push-workflows`); never force-push shared branches unless explicitly requested.
 - Never `--no-verify` / skip hooks unless the user explicitly requests it.

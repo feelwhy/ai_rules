@@ -9,10 +9,9 @@ Longer logs stay where the work happens: `src/16-commit-workflow.md`,
 
 ## 2026-07-28 — foreign WIP was stashed
 
-DATA-010 prep stashed and rebased the shared worktree while
-`journey/§1-PUB-bidder-privacy` WIP (`_febado_public_bidder_label`, templates)
-was present. Public Current-bids names reappeared on the live local server
-without permission. The ban is `03-never-discard-wip`.
+A prep step stashed and rebased the shared worktree while another
+chat's unfinished change was present. The change was dropped, and what it
+had hidden reappeared on the running local server without permission. The ban is `03-never-discard-wip`.
 
 ## 2026-08-23 — an empty icon swallowed the page
 
@@ -37,8 +36,7 @@ Appointments `1.3.33`: `/ru/` still showed the English changelog. A filled
 
 ## 2026-09-23 — a red test log stopped a push
 
-A Febado push stopped after a red `devel` run and reported that instead of
-fixing it. The ban is the skill `16-commit-workflow`.
+A push stopped after a red test run and reported that instead of fixing it. The ban is the skill `16-commit-workflow`.
 
 ## 2026-09-28 — disks filled up, and an MCP write had to be repeated
 

@@ -20,7 +20,7 @@ Any of:
 - editing files another chat may also be editing
 - `git checkout` of a shared checkout (a launch does not do this)
 - `env-up` (`--fresh`, `-u`, `-i`, `--test`, restore, neutralize)
-- Febado stack start/recreate, or a restart of a target another chat is using
+- a restart of a target another chat is using
 - live MCP / production writes (faotools.com, master, any other live database)
 
 Read-only search does not need this gate.
@@ -33,7 +33,7 @@ Do not start as if the tree and DB are yours. Before the first mutation:
    untracked paths: **this chat** vs **foreign / unknown**.
 2. Read the current branch (do not assume it). A branch you did not check
    out in this chat is someone else's working branch.
-3. See which Docker target is up (`env-up` ports, Febado `:23069`, open
+3. See which Docker target is up (`env-up` ports, open
    terminals). A target another chat launched is **their** DB until the
    user says otherwise.
 4. If agent transcripts or the user mention another chat on the same
@@ -62,7 +62,7 @@ another chat is testing is not — ask.
 
 ## Branches: do not spoil the other chat
 
-A faOtools launch of another serie does not require a checkout. Do not `git checkout` a shared repo so a demo matches this chat, and do not move the shared checkout out from under another chat's WIP. Febado `:23069` is `03-never-discard-wip`.
+A faOtools launch of another serie does not require a checkout. Do not `git checkout` a shared repo so a demo matches this chat, and do not move the shared checkout out from under another chat's WIP.
 
 After any checkout the user explicitly asked for, say which chats and running containers now see different code.
 

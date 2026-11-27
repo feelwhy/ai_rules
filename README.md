@@ -1,6 +1,6 @@
 # ai_rules
 
-Universal Cursor / agent rules for Odoo work (faOtools + Febado hubs).
+Universal Cursor / agent rules for Odoo work (faOtools hub).
 
 faOtools-specific rules live in sibling repo [`ai_rules_fao`](https://github.com/feelwhy/ai_rules_fao).
 

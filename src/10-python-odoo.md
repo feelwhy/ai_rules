@@ -53,5 +53,4 @@ Never put two `models.Model` or `models.TransientModel` classes in one file.
 ## Variants
 
 - Match the **active Odoo serie** (git branch / env target), not an assumed 19.0 API.
-- **febado**: also follow febado in-repo `python-odoo.mdc` (stricter formatting, `api.model_create_multi`, etc.).
 - **tools** apps-store metadata / version policy: see `ai_rules_fao` manifest + packaging rules.

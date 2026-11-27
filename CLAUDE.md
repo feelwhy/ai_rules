@@ -47,7 +47,7 @@ This rule outranks the instinct to finish early. When in doubt: smaller chunk, a
 
 # AI rules index
 
-This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across faOtools and Febado workspaces. faOtools-specific rules live in sibling `ai_rules_fao`.
+This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across faOtools workspaces. faOtools-specific rules live in sibling `ai_rules_fao`.
 
 ## Always-on (read every turn)
 
@@ -205,8 +205,6 @@ Local Odoo **always** runs in Docker. Never start, suggest, or document a host P
 
 Commands are `30-command-vocabulary`. In a faOtools workspace the examples and the disk bans are `ai_rules_fao` `20-local-commands` and `20-local-docker`.
 
-Febado follows its own in-repo Docker rules. Do not stop or recreate the long-lived `:23069` stack unless asked.
-
 One-off containers must be `--rm`. Prefer existing launch scripts over ad-hoc `docker run`.
 
 # Never discard WIP without permission
@@ -246,10 +244,6 @@ longer matches the worktree the user's server is reading.
    (`ai_rules_fao` `01-hub-serie`).
 5. Committing *only your* paths on a new branch in the **shared** checkout is
    fine when that does not touch foreign files — never "clear the desk" first.
-
-## Shared worktree + long-lived Docker Odoo
-
-Febado `:23069` bind-mounts the shared `febado` checkout. Switching that checkout changes what that server serves. Do not switch it to serve this chat. Do not switch away from a branch that holds **foreign** WIP the user may be browsing unless they ask. After any checkout the user asked for, warn if `:23069` may now be missing code that was visible a minute ago.
 
 ## If you already disturbed foreign WIP
 
@@ -296,7 +290,7 @@ Any of:
 - editing files another chat may also be editing
 - `git checkout` of a shared checkout (a launch does not do this)
 - `env-up` (`--fresh`, `-u`, `-i`, `--test`, restore, neutralize)
-- Febado stack start/recreate, or a restart of a target another chat is using
+- a restart of a target another chat is using
 - live MCP / production writes (faotools.com, master, any other live database)
 
 Read-only search does not need this gate.
@@ -309,7 +303,7 @@ Do not start as if the tree and DB are yours. Before the first mutation:
    untracked paths: **this chat** vs **foreign / unknown**.
 2. Read the current branch (do not assume it). A branch you did not check
    out in this chat is someone else's working branch.
-3. See which Docker target is up (`env-up` ports, Febado `:23069`, open
+3. See which Docker target is up (`env-up` ports, open
    terminals). A target another chat launched is **their** DB until the
    user says otherwise.
 4. If agent transcripts or the user mention another chat on the same
@@ -338,7 +332,7 @@ another chat is testing is not — ask.
 
 ## Branches: do not spoil the other chat
 
-A faOtools launch of another serie does not require a checkout. Do not `git checkout` a shared repo so a demo matches this chat, and do not move the shared checkout out from under another chat's WIP. Febado `:23069` is `03-never-discard-wip`.
+A faOtools launch of another serie does not require a checkout. Do not `git checkout` a shared repo so a demo matches this chat, and do not move the shared checkout out from under another chat's WIP.
 
 After any checkout the user explicitly asked for, say which chats and running containers now see different code.
 
@@ -422,16 +416,13 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | pull changes | fast-forward the tree that is already on that branch with `--ff-only` (`ai_rules_fao` `01-hub-serie`). Do not `git checkout` |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
 | odoo shell / psql | `env-shell.sh <target>` / `env-shell.sh <target> psql` |
-| show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`). Febado: `febado/scripts/docker-dev.sh logs` (Cursor tab `febado Odoo logs`) |
+| show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`) |
 | sync images/dbs | `faotools_env/local/env-sync.sh` (downloads **and** restores + neutralizes) |
 | is \<target\> ready to launch? | `faotools_env/local/env-prepare.sh --check` |
 | stop \<target\> / stop everything | `env-down.sh <target>` / `env-down.sh` (all targets; add `--remove` for a teardown with its volume) |
 | clean up / free space | `env-gc.sh` (dry run) → report → `env-gc.sh --apply` |
 | keep this review DB / drop it | `env-review.sh keep <db> --hours N` / `env-review.sh down <db>` |
-| launch / start febado | febado `scripts/docker-dev.sh start` (no `--no-logs`) + febado local Docker rules — not `env-up`. Same Cursor log tab as faOtools (`febado Odoo logs`) |
-| test febado module | febado `scripts/test.sh` (in-repo) |
 | commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
-| (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
 | commit A1 | local commit only, **with** a Paseo `Code review` first (`16-commit-workflow`) |
 | commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
@@ -464,13 +455,11 @@ A different target or serie is a new launch, not this case.
    Never present a multi-minute wait as normal.
 2. **Logs.** Stream them in a **visible** Cursor terminal tab (agent shells stay
    hidden). faOtools: `env-up.sh <target>` with no `--no-logs` — it follows on a
-   TTY and requests `<target> Odoo logs`. Febado: `scripts/docker-dev.sh start`
-   with no `--no-logs` — it requests `febado Odoo logs` the same way
-   (`~/env-sync/logs/reveal-in-cursor`). Also give the host log path when
+   TTY and requests `<target> Odoo logs`. Also give the host log path when
    faOtools prints one.
 3. **Links.** Always repeat the printed Odoo URL (with `admin` / `admin`), the
    Mailpit URL, and the database name — do not make the user hunt for them.
-4. **Errors.** `env-up.sh` and Febado `docker-dev.sh start` print `ERROR`/`CRITICAL`
+4. **Errors.** `env-up.sh` prints `ERROR`/`CRITICAL`
    lines logged since start. Report them instead of claiming a clean launch.
 
 # Paseo orchestration

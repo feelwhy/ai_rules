@@ -19,16 +19,13 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | pull changes | fast-forward the tree that is already on that branch with `--ff-only` (`ai_rules_fao` `01-hub-serie`). Do not `git checkout` |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
 | odoo shell / psql | `env-shell.sh <target>` / `env-shell.sh <target> psql` |
-| show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`). Febado: `febado/scripts/docker-dev.sh logs` (Cursor tab `febado Odoo logs`) |
+| show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`) |
 | sync images/dbs | `faotools_env/local/env-sync.sh` (downloads **and** restores + neutralizes) |
 | is \<target\> ready to launch? | `faotools_env/local/env-prepare.sh --check` |
 | stop \<target\> / stop everything | `env-down.sh <target>` / `env-down.sh` (all targets; add `--remove` for a teardown with its volume) |
 | clean up / free space | `env-gc.sh` (dry run) → report → `env-gc.sh --apply` |
 | keep this review DB / drop it | `env-review.sh keep <db> --hours N` / `env-review.sh down <db>` |
-| launch / start febado | febado `scripts/docker-dev.sh start` (no `--no-logs`) + febado local Docker rules — not `env-up`. Same Cursor log tab as faOtools (`febado Odoo logs`) |
-| test febado module | febado `scripts/test.sh` (in-repo) |
 | commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
-| (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
 | commit A1 | local commit only, **with** a Paseo `Code review` first (`16-commit-workflow`) |
 | commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
@@ -61,11 +58,9 @@ A different target or serie is a new launch, not this case.
    Never present a multi-minute wait as normal.
 2. **Logs.** Stream them in a **visible** Cursor terminal tab (agent shells stay
    hidden). faOtools: `env-up.sh <target>` with no `--no-logs` — it follows on a
-   TTY and requests `<target> Odoo logs`. Febado: `scripts/docker-dev.sh start`
-   with no `--no-logs` — it requests `febado Odoo logs` the same way
-   (`~/env-sync/logs/reveal-in-cursor`). Also give the host log path when
+   TTY and requests `<target> Odoo logs`. Also give the host log path when
    faOtools prints one.
 3. **Links.** Always repeat the printed Odoo URL (with `admin` / `admin`), the
    Mailpit URL, and the database name — do not make the user hunt for them.
-4. **Errors.** `env-up.sh` and Febado `docker-dev.sh start` print `ERROR`/`CRITICAL`
+4. **Errors.** `env-up.sh` prints `ERROR`/`CRITICAL`
    lines logged since start. Report them instead of claiming a clean launch.

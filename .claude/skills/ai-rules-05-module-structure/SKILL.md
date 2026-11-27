@@ -26,4 +26,3 @@ description: Odoo module scaffolding and engineering defaults
 
 - **tools** (apps store): each top-level `__manifest__.py` is a separately installable product unless `depends` says otherwise.
 - **support**: one database; flows span modules via declared dependencies — still avoid undeclared coupling.
-- **febado**: follow `febado-new-module.mdc` and in-repo packaging rules.

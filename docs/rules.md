@@ -54,7 +54,7 @@ _Index of centralized AI rules — what to read and when_
 
 # AI rules index
 
-This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across faOtools and Febado workspaces. faOtools-specific rules live in sibling `ai_rules_fao`.
+This folder (`ai_rules`) holds **universal** Cursor / agent rules shared across faOtools workspaces. faOtools-specific rules live in sibling `ai_rules_fao`.
 
 ## Always-on (read every turn)
 
@@ -224,8 +224,6 @@ Local Odoo **always** runs in Docker. Never start, suggest, or document a host P
 
 Commands are `30-command-vocabulary`. In a faOtools workspace the examples and the disk bans are `ai_rules_fao` `20-local-commands` and `20-local-docker`.
 
-Febado follows its own in-repo Docker rules. Do not stop or recreate the long-lived `:23069` stack unless asked.
-
 One-off containers must be `--rm`. Prefer existing launch scripts over ad-hoc `docker run`.
 
 ## 03-never-discard-wip
@@ -269,10 +267,6 @@ longer matches the worktree the user's server is reading.
    (`ai_rules_fao` `01-hub-serie`).
 5. Committing *only your* paths on a new branch in the **shared** checkout is
    fine when that does not touch foreign files — never "clear the desk" first.
-
-## Shared worktree + long-lived Docker Odoo
-
-Febado `:23069` bind-mounts the shared `febado` checkout. Switching that checkout changes what that server serves. Do not switch it to serve this chat. Do not switch away from a branch that holds **foreign** WIP the user may be browsing unless they ask. After any checkout the user asked for, warn if `:23069` may now be missing code that was visible a minute ago.
 
 ## If you already disturbed foreign WIP
 
@@ -343,7 +337,6 @@ _Odoo module scaffolding and engineering defaults_
 
 - **tools** (apps store): each top-level `__manifest__.py` is a separately installable product unless `depends` says otherwise.
 - **support**: one database; flows span modules via declared dependencies — still avoid undeclared coupling.
-- **febado**: follow `febado-new-module.mdc` and in-repo packaging rules.
 
 ## 06-verify-hypotheses
 
@@ -391,7 +384,7 @@ Any of:
 - editing files another chat may also be editing
 - `git checkout` of a shared checkout (a launch does not do this)
 - `env-up` (`--fresh`, `-u`, `-i`, `--test`, restore, neutralize)
-- Febado stack start/recreate, or a restart of a target another chat is using
+- a restart of a target another chat is using
 - live MCP / production writes (faotools.com, master, any other live database)
 
 Read-only search does not need this gate.
@@ -404,7 +397,7 @@ Do not start as if the tree and DB are yours. Before the first mutation:
    untracked paths: **this chat** vs **foreign / unknown**.
 2. Read the current branch (do not assume it). A branch you did not check
    out in this chat is someone else's working branch.
-3. See which Docker target is up (`env-up` ports, Febado `:23069`, open
+3. See which Docker target is up (`env-up` ports, open
    terminals). A target another chat launched is **their** DB until the
    user says otherwise.
 4. If agent transcripts or the user mention another chat on the same
@@ -433,7 +426,7 @@ another chat is testing is not — ask.
 
 ## Branches: do not spoil the other chat
 
-A faOtools launch of another serie does not require a checkout. Do not `git checkout` a shared repo so a demo matches this chat, and do not move the shared checkout out from under another chat's WIP. Febado `:23069` is `03-never-discard-wip`.
+A faOtools launch of another serie does not require a checkout. Do not `git checkout` a shared repo so a demo matches this chat, and do not move the shared checkout out from under another chat's WIP.
 
 After any checkout the user explicitly asked for, say which chats and running containers now see different code.
 
@@ -524,7 +517,6 @@ Never put two `models.Model` or `models.TransientModel` classes in one file.
 ## Variants
 
 - Match the **active Odoo serie** (git branch / env target), not an assumed 19.0 API.
-- **febado**: also follow febado in-repo `python-odoo.mdc` (stricter formatting, `api.model_create_multi`, etc.).
 - **tools** apps-store metadata / version policy: see `ai_rules_fao` manifest + packaging rules.
 
 ## 11-xml-views
@@ -678,12 +670,6 @@ _Commit, test, review, and push workflow_
 The **letters are universal**; the routing and the gates behind them belong to the project. The table
 below is the **faOtools hub** mapping.
 
-**febado already owns its own A/B definition** (`febado-push-workflows.local.mdc`) and it is *not*
-this one — there, Mode A (local commit) is the default even for “push this workflow / push WF-…”, and
-Mode B means a **section-scoped MR**, not a bare `git push`. In febado, always route the phrase and
-the test/review gates through febado’s rule; never apply the hub row below to it, and never relax
-febado’s stricter policy.
-
 | User says | Mode | Push | Tests | Review |
 |-----------|------|------|-------|--------|
 | “commit”, “commit A”, “commit mode A” | **A** | no | not required | no review |
@@ -706,8 +692,7 @@ stop after tests to ask “proceed with the MR?”, and do not skip tests to fin
 push.
 
 1. **Run** the relevant tests **locally in Docker** for every changed module
-   (`env-up.sh demo<N>[e] --test <module>`, `support/devops/run_tests.sh`,
-   febado `scripts/test.sh`).
+   (`env-up.sh demo<N>[e] --test <module>`, `support/devops/run_tests.sh`).
 2. **Check** the real output in this chat (command + pass/fail).
 3. **Fix** failures and **re-run the same local command** until green. Un-runnable →
    stop and ask. Do not push.
@@ -715,17 +700,16 @@ push.
 
 **GitLab CI is not step 1.** Watching a pipeline does not replace the local run.
 **No local test command output in this chat → no `git push`, no MR, no MWPS.**
-Speed, chunk-gate, `:23069` going into test mode, “CI will catch it”, or “Mode A
-already committed” are not exceptions. After `test.sh`, restart the Febado stack
-if the user still needs the browser.
+Speed, chunk-gate, “CI will catch it”, or “Mode A already committed” are not
+exceptions.
 
 **A red log is not a stop.** The user already asked for the push. Read each
 failure, fix it, and re-run the same local command until it is green, then
 review and push in that same task. Do not end the turn with “tests were not
 green, so I did not push,” and do not wait for the user to repeat the push.
 The only stop is a run that cannot start (Docker down, the command itself
-missing). Incident 2026-09-23: a Febado push stopped after a red `devel` run
-and reported that instead of fixing it.
+missing). Incident 2026-09-23: a push stopped after a red test run and
+reported that instead of fixing it.
 - **Review = a Paseo worker on the local diff.** Profile `Code review`. Launch and wait as `40-paseo-orchestration`. When the change touches auth, ACL, controllers, or secrets, say that in the worker prompt. Fix or report its findings **before** pushing. The reviewer does not commit.
 - **Push with review unspecified → offer the review** (mode B): ask once, do not push while waiting.
  An explicit “with review” / “without review” in the request wins over the mode letter.
@@ -760,8 +744,8 @@ Staying silent about undelivered work is a failure, not a tidy scope.
 6. When the user says “push” and unshipped work plausibly belongs to it, default to **including**
  it and say what you included. Only clearly unrelated work may be left behind — with a warning.
 
-Incident (2026-08-18): six walked febado workflows plus a finished local-Docker script change had
-sat undelivered for weeks because walk notes called them “local-only” and the check compared commit
+Incident (2026-08-18): six finished workflows plus a local-Docker script change had
+sat undelivered for weeks because notes called them “local-only” and the check compared commit
 subjects. Recovery took two extra MRs. This gate exists so that never repeats.
 
 ## Before committing
@@ -783,7 +767,6 @@ subjects. Recovery took two extra MRs. This gate exists so that never repeats.
 
 - **ai_rules / ai_rules_fao**: push when the user asks to publish rules.
 - **tools / support / …**: push only when the user explicitly asks; prefer leaving working-tree deletions/edits for review when trimming rules.
-- **febado**: follow febado push / MR rules (`febado-push-workflows`); never force-push shared branches unless explicitly requested.
 - Never `--no-verify` / skip hooks unless the user explicitly requests it.
 
 ## 18-xml-translate-html
@@ -4153,16 +4136,13 @@ Resolve phrases using the **flat hub** (`/home/feelwhy/Odoo`). The serie is the 
 | pull changes | fast-forward the tree that is already on that branch with `--ff-only` (`ai_rules_fao` `01-hub-serie`). Do not `git checkout` |
 | test \<module\> | `env-up.sh demo<N>[e] --test <module>` for the requested/active serie |
 | odoo shell / psql | `env-shell.sh <target>` / `env-shell.sh <target> psql` |
-| show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`). Febado: `febado/scripts/docker-dev.sh logs` (Cursor tab `febado Odoo logs`) |
+| show odoo logs | faOtools: `docker compose -f faotools_env/local/run/<target>/compose.yml logs -f` (history: `~/env-sync/logs/<target>/odoo.log`) |
 | sync images/dbs | `faotools_env/local/env-sync.sh` (downloads **and** restores + neutralizes) |
 | is \<target\> ready to launch? | `faotools_env/local/env-prepare.sh --check` |
 | stop \<target\> / stop everything | `env-down.sh <target>` / `env-down.sh` (all targets; add `--remove` for a teardown with its volume) |
 | clean up / free space | `env-gc.sh` (dry run) → report → `env-gc.sh --apply` |
 | keep this review DB / drop it | `env-review.sh keep <db> --hours N` / `env-review.sh down <db>` |
-| launch / start febado | febado `scripts/docker-dev.sh start` (no `--no-logs`) + febado local Docker rules — not `env-up`. Same Cursor log tab as faOtools (`febado Odoo logs`) |
-| test febado module | febado `scripts/test.sh` (in-repo) |
 | commit / commit A / commit (a) | **do** the local commit now — never ask “proceed with the commit?”, never push, no review (`16-commit-workflow`) |
-| (in **febado**) commit / push \<one workflow\> | febado’s own Mode A/B rule decides — “push this workflow” stays **local** there |
 | commit A1 | local commit only, **with** a Paseo `Code review` first (`16-commit-workflow`) |
 | commit B / commit and push / push | **local Docker tests → check → fix →** then commit → push; review unspecified → **offer** a review before pushing. No local test output → no MR (`16-commit-workflow`) |
 | commit B1 / commit B2 | as B, **with** review (B1) / **without** review (B2). GitLab is not the first test run |
@@ -4195,13 +4175,11 @@ A different target or serie is a new launch, not this case.
    Never present a multi-minute wait as normal.
 2. **Logs.** Stream them in a **visible** Cursor terminal tab (agent shells stay
    hidden). faOtools: `env-up.sh <target>` with no `--no-logs` — it follows on a
-   TTY and requests `<target> Odoo logs`. Febado: `scripts/docker-dev.sh start`
-   with no `--no-logs` — it requests `febado Odoo logs` the same way
-   (`~/env-sync/logs/reveal-in-cursor`). Also give the host log path when
+   TTY and requests `<target> Odoo logs`. Also give the host log path when
    faOtools prints one.
 3. **Links.** Always repeat the printed Odoo URL (with `admin` / `admin`), the
    Mailpit URL, and the database name — do not make the user hunt for them.
-4. **Errors.** `env-up.sh` and Febado `docker-dev.sh start` print `ERROR`/`CRITICAL`
+4. **Errors.** `env-up.sh` prints `ERROR`/`CRITICAL`
    lines logged since start. Report them instead of claiming a clean launch.
 
 ## 40-paseo-orchestration

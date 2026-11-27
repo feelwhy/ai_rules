@@ -42,10 +42,6 @@ longer matches the worktree the user's server is reading.
 5. Committing *only your* paths on a new branch in the **shared** checkout is
    fine when that does not touch foreign files — never "clear the desk" first.
 
-## Shared worktree + long-lived Docker Odoo
-
-Febado `:23069` bind-mounts the shared `febado` checkout. Switching that checkout changes what that server serves. Do not switch it to serve this chat. Do not switch away from a branch that holds **foreign** WIP the user may be browsing unless they ask. After any checkout the user asked for, warn if `:23069` may now be missing code that was visible a minute ago.
-
 ## If you already disturbed foreign WIP
 
 1. Say so immediately (what was lost/moved, which paths).
